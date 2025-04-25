@@ -3,3 +3,8 @@ output/
 wandb/
 .specstory/
 /test.txt
+# Ignore venv
+.venv/
+*.pyc
+.DS_Store
+*.pt
