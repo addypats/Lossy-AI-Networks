@@ -4,7 +4,7 @@ wandb/
 .specstory/
 /test.txt
 # Ignore venv
-.venv/
+venv/
 *.pyc
 .DS_Store
 *.pt
