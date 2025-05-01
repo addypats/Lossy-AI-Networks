@@ -1,5 +1,11 @@
 from comms import LossyNetwork
-from trainer import DistributedTrainer, MyClassifierCallback, compute_classfication_metrics
+
+#original trainer of data parallelization
+# from trainer import DistributedTrainer, MyClassifierCallback, compute_classfication_metrics
+
+# New trainer of distributed data parallelization
+from trainer_dist_manual import DistributedTrainer, MyClassifierCallback, compute_classfication_metrics
+
 from data import get_dataset
 from transformers import TrainingArguments
 import os
@@ -34,10 +40,19 @@ def main(args):
         'target_acc': dataset_config['target_acc'],
     }
     callback = MyClassifierCallback(callback_args)
+    
+    # Original Data parallelization code
+    # training_args = TrainingArguments(
+    #     output_dir=output_dir,
+    #     per_device_train_batch_size=int(args.batch_size/4) if args.num_nodes == 2 else args.batch_size,
+    #     per_device_eval_batch_size=int(args.batch_size/4) if args.num_nodes == 2 else args.batch_size,
+        
+    # New trainer args of distributed data parallelization
     training_args = TrainingArguments(
         output_dir=output_dir,
-        per_device_train_batch_size=int(args.batch_size/4) if args.num_nodes == 2 else args.batch_size,
-        per_device_eval_batch_size=int(args.batch_size/4) if args.num_nodes == 2 else args.batch_size,
+        per_device_train_batch_size=args.batch_size // args.num_nodes,
+        per_device_eval_batch_size=args.batch_size // args.num_nodes,
+        # From here on, it is the same
         num_train_epochs=args.epochs,
         learning_rate= args.learning_rate,
         weight_decay=0.01,
