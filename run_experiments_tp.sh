@@ -17,7 +17,7 @@ for loss_rate in 0; do
       --nproc_per_node $TP_SIZE \
       --master_addr $MASTER_ADDR \
       --master_port $MASTER_PORT \
-      src/pytorch_train.py \
+      src/pytorch_train_tp.py \
         --tensor_parallel_size $TP_SIZE \
         --model_name "meta-llama/Llama-3.2-1B" \
         --dataset "winogrande" \

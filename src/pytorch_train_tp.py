@@ -5,6 +5,7 @@ import torch
 import yaml
 import numpy as np
 import torch.distributed as dist
+import torch.nn as nn
 from tqdm import tqdm
 from datasets import load_dataset
 from torch.utils.data import DataLoader
@@ -16,15 +17,29 @@ from sklearn.metrics import accuracy_score
 from comms import LossyNetwork
 from parallel_layers import RowParallelLinear
 
+def replace_linears(module: nn.Module, world_size: int, group: dist.ProcessGroup):
+    """
+    Recursively replace nn.Linear in `module` with RowParallelLinear
+    whenever out_features % world_size == 0.
+    """
+    for name, child in list(module.named_children()):
+        if isinstance(child, nn.Linear):
+            out_f = child.out_features
+            if out_f % world_size == 0:
+                # perform the wrap
+                wrapped = RowParallelLinear(child, world_size, group)
+                setattr(module, name, wrapped)
+        else:
+            replace_linears(child, world_size, group)
+
 def train_step(model, inputs, optimizer, network):
-    """Single step: forward, backward, apply lossy-network to grads, optimizer."""
     model.train()
     outputs = model(**inputs)
     loss = outputs.loss
     loss.backward()
 
-    # simulate packet loss on each param.grad
-    for name, param in model.named_parameters():
+    # simulate packet loss on gradients
+    for _, param in model.named_parameters():
         if param.requires_grad and param.grad is not None:
             mask = network.send(param.grad)
             param.grad = network.receive(param.grad, mask)
@@ -33,11 +48,11 @@ def train_step(model, inputs, optimizer, network):
     optimizer.zero_grad()
     return loss.item()
 
-def evaluate(model, eval_dataloader, device):
+def evaluate(model, eval_loader, device):
     model.eval()
     all_preds, all_labels = [], []
     with torch.no_grad():
-        for batch in eval_dataloader:
+        for batch in eval_loader:
             batch = {k: v.to(device) for k, v in batch.items()}
             logits = model(**batch).logits
             preds = torch.argmax(logits, dim=-1).cpu().numpy()
@@ -47,13 +62,13 @@ def evaluate(model, eval_dataloader, device):
     return accuracy_score(all_labels, all_preds)
 
 def train_to_accuracy(args):
-    # ---- Distributed init ----
+    # --- Distributed init ---
     torch.cuda.set_device(args.local_rank)
     dist.init_process_group(backend='nccl', init_method='env://')
     world_size = args.tensor_parallel_size
     group = dist.group.WORLD
 
-    # ---- Load dataset ----
+    # --- Dataset loading (only winogrande shown; extend as needed) ---
     if args.dataset == "winogrande":
         ds = load_dataset("allenai/winogrande", "winogrande_l", trust_remote_code=True)
         train_ds, eval_ds = ds["train"], ds["validation"]
@@ -64,44 +79,52 @@ def train_to_accuracy(args):
     # apply sample limits
     if args.max_samples > 0:
         train_ds = train_ds.select(range(min(args.max_samples, len(train_ds))))
-        eval_ds = eval_ds.select(range(min(args.max_samples // 5, len(eval_ds))))
+        eval_ds  = eval_ds.select(range(min(args.max_samples // 5, len(eval_ds))))
 
-    # ---- Model & Tokenizer ----
+    # --- Model & Tokenizer ---
     model = AutoModelForSequenceClassification.from_pretrained(
-        args.model_name, num_labels=num_labels
+        args.model_name, 
+        num_labels=num_labels,
+        use_auth_token=True
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.model_name,
+        use_auth_token=True
+    )
 
-    # wrap just the classification head in RowParallelLinear
-    orig_head = model.classifier
-    model.classifier = RowParallelLinear(orig_head, world_size, group)
+    # --- Replace all large linears in transformer blocks ---
+    # (model.model is the LlamaModel inside LlamaForSequenceClassification)
+    replace_linears(model.model, world_size, group)
     model.to(torch.cuda.current_device())
 
-    # ---- Preprocess (example for winogrande) ----
-    def preprocess_winogrande(batch):
+    # --- Preprocessing for Winogrande (as before) ---
+    def preprocess(batch):
         sentence = batch["sentence"]
-        opt1, opt2 = batch["option1"], batch["option2"]
+        o1, o2 = batch["option1"], batch["option2"]
         placeholder = "_" if "_" in sentence else "___"
-        s1 = sentence.replace(placeholder, opt1)
-        s2 = sentence.replace(placeholder, opt2)
+        s1 = sentence.replace(placeholder, o1)
+        s2 = sentence.replace(placeholder, o2)
         label = 0 if batch["answer"] == '1' else 1
-        enc = tokenizer([s1, s2], truncation=True, padding="max_length",
-                        max_length=256, return_tensors="pt")
+        enc = tokenizer([s1, s2],
+                        truncation=True,
+                        padding="max_length",
+                        max_length=256,
+                        return_tensors="pt")
         return {
             'input_ids': enc['input_ids'][label].tolist(),
             'attention_mask': enc['attention_mask'][label].tolist(),
             'labels': label
         }
 
-    train_ds = train_ds.map(preprocess_winogrande,
+    train_ds = train_ds.map(preprocess,
                             remove_columns=["sentence","option1","option2","answer"])
-    eval_ds  = eval_ds.map(preprocess_winogrande,
+    eval_ds  = eval_ds.map(preprocess,
                            remove_columns=["sentence","option1","option2","answer"])
 
     train_ds.set_format(type='torch', columns=['input_ids','attention_mask','labels'])
     eval_ds.set_format(type='torch', columns=['input_ids','attention_mask','labels'])
 
-    # ---- Dataloaders with DistributedSampler ----
+    # --- DistributedSamplers and Dataloaders ---
     train_sampler = DistributedSampler(train_ds,
                                        num_replicas=world_size,
                                        rank=args.local_rank,
@@ -118,22 +141,24 @@ def train_to_accuracy(args):
                              batch_size=args.batch_size,
                              sampler=eval_sampler)
 
-    # ---- Optimizer & Network ----
-    optimizer = optim.AdamW(model.parameters(),
-                            lr=args.learning_rate,
-                            weight_decay=args.weight_decay)
-    network   = LossyNetwork(loss_rate=args.loss_rate)
+    # --- Optimizer & LossyNetwork ---
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay
+    )
+    network = LossyNetwork(loss_rate=args.loss_rate)
     network.set_seed(args.seed)
 
-    # ---- Training loop ----
+    # --- Training loop ---
     best_acc = 0.0
     no_imp   = 0
     step     = 0
     start    = time.time()
 
     while step < args.max_steps:
-        train_sampler.set_epoch(step)  # shuffle differently each epoch
-        for batch in tqdm(train_loader, desc=f"Step {step}", disable=(args.local_rank!=0)):
+        train_sampler.set_epoch(step)
+        for batch in tqdm(train_loader, desc=f"Rank {args.local_rank} Step {step}", disable=(args.local_rank != 0)):
             batch = {k: v.to(model.device) for k, v in batch.items()}
             loss = train_step(model, batch, optimizer, network)
             step += 1
@@ -143,26 +168,21 @@ def train_to_accuracy(args):
                 elapsed = time.time() - start
                 print(f"Step {step} | Acc {acc:.4f} | Time {elapsed:.1f}s")
 
-                # save results & early stop
                 if acc >= args.target_accuracy:
-                    print("Target reached!")
-                    torch.save(model.state_dict(), os.path.join(args.output_dir,"model_final.pt"))
+                    torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pt"))
                     return
                 if acc > best_acc:
                     best_acc, no_imp = acc, 0
-                    torch.save(model.state_dict(), os.path.join(args.output_dir,"model_best.pt"))
+                    torch.save(model.state_dict(), os.path.join(args.output_dir, "model_best.pt"))
                 else:
-                    no_imp +=1
+                    no_imp += 1
                     if no_imp >= args.patience:
-                        print("No improvement; stopping.")
                         return
-
             if step >= args.max_steps:
                 break
 
-    # final save by rank 0
     if args.local_rank == 0:
-        torch.save(model.state_dict(), os.path.join(args.output_dir,"model_final.pt"))
+        torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pt"))
 
 if __name__ == "__main__":
     import argparse
@@ -170,7 +190,7 @@ if __name__ == "__main__":
     parser.add_argument('--local_rank', type=int, default=0,
                         help='Provided by torchrun')
     parser.add_argument('--tensor_parallel_size', type=int, default=4,
-                        help='Number of GPUs per node')
+                        help='GPUs per node')
     parser.add_argument('--model_name', type=str,
                         default='meta-llama/Llama-3.2-1B')
     parser.add_argument('--dataset', type=str,
@@ -188,10 +208,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default='./output')
     args = parser.parse_args()
 
-    # make output_dir per run if desired
     os.makedirs(args.output_dir, exist_ok=True)
-    # reproducibility
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-
     train_to_accuracy(args)
