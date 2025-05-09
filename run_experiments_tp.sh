@@ -1,5 +1,13 @@
 #!/bin/bash
 # Launch 4 ranks for tensor parallelism (one per GPU)
+
+source /home/ubuntu/tp-env/bin/activate
+
+export NCCL_DEBUG=WARN
+export NCCL_ASYNC_ERROR_HANDLING=1
+
+TORCHRUN=$(which torchrun)
+
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12355
 export CUDA_VISIBLE_DEVICES=0,1,2,3
@@ -21,7 +29,8 @@ for loss_rate in 0; do
         --tensor_parallel_size $TP_SIZE \
         --model_name "meta-llama/Llama-3.2-1B" \
         --dataset "winogrande" \
-        --batch_size 8 \
+        --batch_size 2 \
+	--max_length 128 \
         --learning_rate 3e-5 \
         --weight_decay 0.01 \
         --loss_rate $loss_rate \

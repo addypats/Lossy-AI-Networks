@@ -13,6 +13,7 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.optim as optim
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from sklearn.metrics import accuracy_score
+import torch.distributed as dist
 
 from comms import LossyNetwork
 from parallel_layers import RowParallelLinear
@@ -63,7 +64,8 @@ def evaluate(model, eval_loader, device):
 
 def train_to_accuracy(args):
     # --- Distributed init ---
-    torch.cuda.set_device(args.local_rank)
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank)
     dist.init_process_group(backend='nccl', init_method='env://')
     world_size = args.tensor_parallel_size
     group = dist.group.WORLD
@@ -87,10 +89,18 @@ def train_to_accuracy(args):
         num_labels=num_labels,
         use_auth_token=True
     )
+
+    model.gradient_checkpointing_enable()
+
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name,
         use_auth_token=True
     )
+    
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id  = tokenizer.pad_token_id
+        model.resize_token_embeddings(len(tokenizer))
 
     # --- Replace all large linears in transformer blocks ---
     # (model.model is the LlamaModel inside LlamaForSequenceClassification)
@@ -108,7 +118,7 @@ def train_to_accuracy(args):
         enc = tokenizer([s1, s2],
                         truncation=True,
                         padding="max_length",
-                        max_length=256,
+                        max_length=args.max_length,
                         return_tensors="pt")
         return {
             'input_ids': enc['input_ids'][label].tolist(),
@@ -127,7 +137,7 @@ def train_to_accuracy(args):
     # --- DistributedSamplers and Dataloaders ---
     train_sampler = DistributedSampler(train_ds,
                                        num_replicas=world_size,
-                                       rank=args.local_rank,
+                                       rank=local_rank,
                                        shuffle=True)
     train_loader = DataLoader(train_ds,
                               batch_size=args.batch_size,
@@ -135,11 +145,15 @@ def train_to_accuracy(args):
 
     eval_sampler = DistributedSampler(eval_ds,
                                       num_replicas=world_size,
-                                      rank=args.local_rank,
+                                      rank=local_rank,
                                       shuffle=False)
     eval_loader = DataLoader(eval_ds,
                              batch_size=args.batch_size,
                              sampler=eval_sampler)
+
+    # set up AMP
+    use_fp16 = getattr(args, "fp16", False)
+    scaler = GradScaler() if use_fp16 else None
 
     # --- Optimizer & LossyNetwork ---
     optimizer = optim.AdamW(
@@ -156,11 +170,33 @@ def train_to_accuracy(args):
     step     = 0
     start    = time.time()
 
+    dist.barrier()
+
     while step < args.max_steps:
         train_sampler.set_epoch(step)
         for batch in tqdm(train_loader, desc=f"Rank {args.local_rank} Step {step}", disable=(args.local_rank != 0)):
             batch = {k: v.to(model.device) for k, v in batch.items()}
             loss = train_step(model, batch, optimizer, network)
+
+            # Mixed-precision forward/backward:
+            if use_fp16:
+                with autocast():
+                    outputs = model(**batch)
+                    loss = outputs.loss
+                scaler.scale(loss).backward()
+
+                # mask grads, just like before:
+                for _, param in model.named_parameters():
+                    if param.grad is not None:
+                        mask = network.send(param.grad)
+                        param.grad = network.receive(param.grad, mask)
+
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+            else:
+                loss = train_step(model, batch, optimizer, network)
+
             step += 1
 
             if step % args.eval_steps == 0 and args.local_rank == 0:
@@ -189,6 +225,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Tensor-parallel train")
     parser.add_argument('--local_rank', type=int, default=0,
                         help='Provided by torchrun')
+    parser.add_argument('--max_length', type=int, default=256)
     parser.add_argument('--tensor_parallel_size', type=int, default=4,
                         help='GPUs per node')
     parser.add_argument('--model_name', type=str,

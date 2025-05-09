@@ -1,3 +1,5 @@
+# src/parallel_layers.py
+
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -18,20 +20,28 @@ class RowParallelLinear(nn.Module):
         assert out_features % world_size == 0, "out_features must be divisible by world_size"
         self.local_out = out_features // world_size
 
-        # allocate local shard
+        # allocate local shard for weight
         self.weight = nn.Parameter(
             torch.empty(self.local_out, in_features, device=torch.cuda.current_device())
         )
-        self.bias = nn.Parameter(
-            torch.empty(self.local_out, device=torch.cuda.current_device())
-        )
 
-        # scatter pretrained weights/bias into shards
-        shards_w = orig_linear.weight.data.chunk(world_size, dim=0)
-        shards_b = orig_linear.bias.data.chunk(world_size, dim=0)
+        # handle bias possibly being None
+        if orig_linear.bias is not None:
+            self.bias = nn.Parameter(
+                torch.empty(self.local_out, device=torch.cuda.current_device())
+            )
+        else:
+            self.bias = None
+
+        # split pretrained weight into shards
+        weight_shards = orig_linear.weight.data.chunk(world_size, dim=0)
         rank = dist.get_rank(group=self.group)
-        self.weight.data.copy_(shards_w[rank])
-        self.bias.data.copy_(shards_b[rank])
+        self.weight.data.copy_(weight_shards[rank])
+
+        # split pretrained bias if exists
+        if orig_linear.bias is not None:
+            bias_shards = orig_linear.bias.data.chunk(world_size, dim=0)
+            self.bias.data.copy_(bias_shards[rank])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [batch, in_features]
@@ -41,3 +51,4 @@ class RowParallelLinear(nn.Module):
         gathered = [torch.zeros_like(local_out) for _ in range(self.world_size)]
         dist.all_gather(gathered, local_out, group=self.group)
         return torch.cat(gathered, dim=-1)  # [batch, out_features]
+
