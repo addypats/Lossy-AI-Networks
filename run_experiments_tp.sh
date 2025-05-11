@@ -20,50 +20,39 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 # Tensor-parallel world size
 TP_SIZE=4
 
-# Hyperparameter grid
-LOSS_RATES=(0 0.001 0.005 0.01)
-PRECISIONS=(16 32)
+# Loss-rate grid
+LOSS_RATES=(0.0001)
 
-# Make sure output directory exists
+# Ensure output directory exists
 mkdir -p output
 
 for loss_rate in "${LOSS_RATES[@]}"; do
-  for prec in "${PRECISIONS[@]}"; do
-    # Build a unique run ID
-    run_id="tp_llama_winogrande_lr${loss_rate}_fp${prec}"
-    echo "=== Starting $run_id ==="
+  run_id="tp_gpt2_winogrande_lr${loss_rate}"
+  echo "=== Starting $run_id ==="
 
-    # Decide whether to pass --fp16
-    fp_flag=""
-    if [ "$prec" -eq 16 ]; then
-      fp_flag="--fp16"
-    fi
+  $TORCHRUN \
+    --nproc_per_node $TP_SIZE \
+    --master_addr   $MASTER_ADDR \
+    --master_port   $MASTER_PORT \
+    src/pytorch_train_tp.py \
+      --tensor_parallel_size $TP_SIZE \
+      --model_name           "meta-llama/Llama-3.2-1B" \
+      --dataset              "winogrande" \
+      --batch_size           2 \
+      --max_length           128 \
+      --learning_rate        3e-5 \
+      --weight_decay         0.01 \
+      --loss_rate            $loss_rate \
+      --seed                 1234 \
+      --max_samples          0 \
+      --target_accuracy      0.75 \
+      --eval_steps           100 \
+      --patience             3 \
+      --max_steps            100000 \
+      --output_dir           "output/${run_id}"
 
-    $TORCHRUN \
-      --nproc_per_node $TP_SIZE \
-      --master_addr $MASTER_ADDR \
-      --master_port $MASTER_PORT \
-      src/pytorch_train_tp.py \
-        --tensor_parallel_size $TP_SIZE \
-        --model_name "meta-llama/Llama-3.2-1B" \
-        --dataset "winogrande" \
-        --batch_size 2 \
-        --max_length 128 \
-        --learning_rate 3e-5 \
-        --weight_decay 0.01 \
-        --loss_rate $loss_rate \
-        --seed 1234 \
-        --max_samples 0 \
-        --target_accuracy 0.75 \
-        --eval_steps 100 \
-        --patience 3 \
-        --max_steps 100000 \
-        --output_dir "output/${run_id}" \
-        $fp_flag
-
-    echo "=== Completed $run_id ==="
-    echo
-  done
+  echo "=== Completed $run_id ==="
+  echo
 done
 
 echo "All tensor-parallel runs done."
