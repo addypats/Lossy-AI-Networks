@@ -3,43 +3,25 @@
 
 source /home/ubuntu/tp-env/bin/activate
 
-# NCCL tuning
 export NCCL_DEBUG=WARN
-export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_ASYNC_ERROR_HANDLING=1
 
-# Torchrun binary
 TORCHRUN=$(which torchrun)
 
-# Rendezvous settings
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12355
-
-# GPUs to use
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
-# Tensor-parallel world size
 TP_SIZE=4
 
-# Hyperparameter grid
-LOSS_RATES=(0 0.001 0.005 0.01)
-PRECISIONS=(16 32)
-
-# Make sure output directory exists
 mkdir -p output
 
-for loss_rate in "${LOSS_RATES[@]}"; do
-  for prec in "${PRECISIONS[@]}"; do
-    # Build a unique run ID
+for loss_rate in 0; do
+  for prec in 32; do
     run_id="tp_llama_winogrande_lr${loss_rate}_fp${prec}"
     echo "=== Starting $run_id ==="
 
-    # Decide whether to pass --fp16
-    fp_flag=""
-    if [ "$prec" -eq 16 ]; then
-      fp_flag="--fp16"
-    fi
-
-    $TORCHRUN \
+    torchrun \
       --nproc_per_node $TP_SIZE \
       --master_addr $MASTER_ADDR \
       --master_port $MASTER_PORT \
@@ -48,7 +30,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
         --model_name "meta-llama/Llama-3.2-1B" \
         --dataset "winogrande" \
         --batch_size 2 \
-        --max_length 128 \
+	--max_length 128 \
         --learning_rate 3e-5 \
         --weight_decay 0.01 \
         --loss_rate $loss_rate \
@@ -58,11 +40,9 @@ for loss_rate in "${LOSS_RATES[@]}"; do
         --eval_steps 100 \
         --patience 3 \
         --max_steps 100000 \
-        --output_dir "output/${run_id}" \
-        $fp_flag
+        --output_dir "output/${run_id}"
 
     echo "=== Completed $run_id ==="
-    echo
   done
 done
 
