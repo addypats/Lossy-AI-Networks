@@ -66,7 +66,13 @@ def train_to_accuracy(args):
     # --- Distributed init ---
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
-    dist.init_process_group(backend='nccl', init_method='env://')
+    # dist.init_process_group(backend='nccl', init_method='env://')
+    dist.init_process_group(
+    backend='nccl',
+    init_method='env://',
+    world_size=args.tensor_parallel_size,
+    rank=local_rank,
+    )
     world_size = args.tensor_parallel_size
     group = dist.group.WORLD
 
