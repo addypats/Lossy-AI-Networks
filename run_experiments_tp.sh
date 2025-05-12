@@ -3,7 +3,18 @@
 
 source /home/ubuntu/tp-env/bin/activate
 
-# NCCL tuning
+# # NCCL tuning
+# export NCCL_DEBUG=WARN
+# export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+
+
+# !–– New NCCL fixes ––!
+export NCCL_NET_OFI_DISABLE=1
+export NCCL_SOCKET_IFNAME=eth0
+export NCCL_IB_DISABLE=1
+export NCCL_LAUNCH_TIMEOUT=1200
+export NCCL_TIMEOUT=1200
+
 export NCCL_DEBUG=WARN
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 

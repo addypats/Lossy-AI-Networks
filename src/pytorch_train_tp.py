@@ -72,6 +72,8 @@ def train_to_accuracy(args):
     init_method='env://',
     world_size=args.tensor_parallel_size,
     rank=local_rank,
+    # pass device_id so NCCL knows exactly which GPU this rank owns
+    group_backend_options={"device_id": local_rank}
     )
     world_size = args.tensor_parallel_size
     group = dist.group.WORLD
@@ -96,7 +98,7 @@ def train_to_accuracy(args):
         use_auth_token=True
     )
 
-    model.gradient_checkpointing_enable()
+    model.gradient_checkpointing_disable()
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name,
