@@ -35,7 +35,7 @@ TP_SIZE=4
 LOSS_RATES=(0.0001)
 
 # Ensure output directory exists
-mkdir -p output
+mkdir -p output_gpt2_lr0.0001
 
 for loss_rate in "${LOSS_RATES[@]}"; do
   run_id="tp_gpt2_winogrande_lr${loss_rate}"
@@ -49,7 +49,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
       --tensor_parallel_size $TP_SIZE \
       --model_name           "gpt2-medium" \
       --dataset              "winogrande" \
-      --batch_size           2 \
+      --batch_size           8 \
       --max_length           128 \
       --learning_rate        3e-5 \
       --weight_decay         0.01 \
@@ -60,7 +60,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
       --eval_steps           100 \
       --patience             3 \
       --max_steps            100000 \
-      --output_dir           "output/${run_id}"
+      --output_dir           "output_gpt2_lr0.0001/${run_id}"
 
   echo "=== Completed $run_id ==="
   echo
