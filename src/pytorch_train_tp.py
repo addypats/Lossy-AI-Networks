@@ -69,11 +69,7 @@ def train_to_accuracy(args):
     # dist.init_process_group(backend='nccl', init_method='env://')
     dist.init_process_group(
     backend='nccl',
-    init_method='env://',
-    world_size=args.tensor_parallel_size,
-    rank=local_rank,
-    # pass device_id so NCCL knows exactly which GPU this rank owns
-    group_backend_options={"device_id": local_rank}
+    init_method='env://'
     )
     world_size = args.tensor_parallel_size
     group = dist.group.WORLD
@@ -112,7 +108,8 @@ def train_to_accuracy(args):
 
     # --- Replace all large linears in transformer blocks ---
     # (model.model is the LlamaModel inside LlamaForSequenceClassification)
-    replace_linears(model.model, world_size, group)
+    # (model.transformer is the GPT2 Model inside GPT2ForSequenceClassification)
+    replace_linears(model.transformer, world_size, group)
     model.to(torch.cuda.current_device())
 
     # --- Preprocessing for Winogrande (as before) ---
