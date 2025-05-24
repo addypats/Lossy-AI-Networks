@@ -47,7 +47,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
     --master_port   $MASTER_PORT \
     src/pytorch_train_tp.py \
       --tensor_parallel_size $TP_SIZE \
-      --model_name           "gpt2-large" \
+      --model_name           "meta-llama/Llama-3.2-1B" \
       --dataset              "winogrande" \
       --batch_size           2 \
       --max_length           128 \

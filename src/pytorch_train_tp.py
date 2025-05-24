@@ -350,18 +350,42 @@ def train_step(model, inputs, optimizer, network):
     return loss.item()
 
 
+# def evaluate(model, eval_loader, device):
+#     model.eval()
+#     all_preds, all_labels = [], []
+#     with torch.no_grad():
+#         for batch in eval_loader:
+#             batch = {k: v.to(device) for k, v in batch.items()}
+#             logits = model(**batch).logits
+#             preds = torch.argmax(logits, dim=-1).cpu().numpy()
+#             labels = batch['labels'].cpu().numpy()
+#             all_preds.extend(preds)
+#             all_labels.extend(labels)
+#     return accuracy_score(all_labels, all_preds)
+
 def evaluate(model, eval_loader, device):
     model.eval()
-    all_preds, all_labels = [], []
+    # torch.long for counts
+    local_correct = torch.tensor(0, device=device, dtype=torch.long)
+    local_total   = torch.tensor(0, device=device, dtype=torch.long)
+
     with torch.no_grad():
         for batch in eval_loader:
             batch = {k: v.to(device) for k, v in batch.items()}
             logits = model(**batch).logits
-            preds = torch.argmax(logits, dim=-1).cpu().numpy()
-            labels = batch['labels'].cpu().numpy()
-            all_preds.extend(preds)
-            all_labels.extend(labels)
-    return accuracy_score(all_labels, all_preds)
+            preds  = torch.argmax(logits, dim=-1)
+            labels = batch['labels']
+            local_correct += (preds == labels).sum()
+            local_total   += labels.size(0)
+
+    # sum across all ranks
+    dist.all_reduce(local_correct, op=dist.ReduceOp.SUM)
+    dist.all_reduce(local_total,   op=dist.ReduceOp.SUM)
+
+    # only need one rank to compute .item()
+    acc = (local_correct.float() / local_total.float()).item()
+    return acc
+
 
 
 def train_to_accuracy(args):
@@ -486,41 +510,79 @@ def train_to_accuracy(args):
             step += 1
 
             # ——— every eval interval, ask rank 0 “are we done?” ———
-            if step % args.eval_steps == 0:
-                stop_signal = torch.zeros(1, dtype=torch.uint8, device=model.device)
+            # if step % args.eval_steps == 0:
+            #     stop_signal = torch.zeros(1, dtype=torch.uint8, device=model.device)
 
+            #     if local_rank == 0:
+            #         acc = evaluate(model, eval_loader, model.device)
+            #         elapsed = time.time() - start
+            #         line = f"Step {step} | Acc {acc:.4f} | Time {elapsed:.1f}s"
+            #         print(line)
+            #         # write to training.log
+            #         log_f.write(line + "\n")
+            #         log_f.flush()
+            #         metrics.append({'step': step, 'accuracy': acc, 'time': elapsed})
+
+            #         if acc >= args.target_accuracy:
+            #             torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pt"))
+            #             stop_signal.fill_(1)
+            #         elif acc > best_acc:
+            #             best_acc, no_imp = acc, 0
+            #             torch.save(model.state_dict(), os.path.join(args.output_dir, "model_best.pt"))
+            #         else:
+            #             no_imp += 1
+            #             if no_imp >= args.patience:
+            #                 stop_signal.fill_(1)
+
+            #     # Broadcast the single‐byte stop flag from rank 0 to all ranks
+            #     dist.broadcast(stop_signal, src=0, group=group)
+
+            #     # If any rank sees stop_signal==1, we all exit here:
+            #     if stop_signal.item() == 1:
+            #         # save metrics before exit
+            #         if local_rank == 0:
+            #             with open(os.path.join(args.output_dir, 'metrics.json'), 'w') as mf:
+            #                 json.dump(metrics, mf, indent=2)
+            #         log_f.close()
+            #         return
+            
+            if step % args.eval_steps == 0:
+                # each rank runs evaluation in parallel
+                acc = evaluate(model, eval_loader, model.device)
+
+                # rank 0 writes logs and decides whether to stop
+                stop_signal = torch.tensor(0, dtype=torch.uint8, device=model.device)
                 if local_rank == 0:
-                    acc = evaluate(model, eval_loader, model.device)
                     elapsed = time.time() - start
-                    line = f"Step {step} | Acc {acc:.4f} | Time {elapsed:.1f}s"
-                    print(line)
-                    # write to training.log
-                    log_f.write(line + "\n")
+                    print(f"Step {step} | Acc {acc:.4f} | Time {elapsed:.1f}s")
+                    log_f.write(f"Step {step} | Acc {acc:.4f} | Time {elapsed:.1f}s\n")
                     log_f.flush()
                     metrics.append({'step': step, 'accuracy': acc, 'time': elapsed})
 
                     if acc >= args.target_accuracy:
-                        torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pt"))
+                        torch.save(model.state_dict(),
+                                os.path.join(args.output_dir, "model_final.pt"))
                         stop_signal.fill_(1)
                     elif acc > best_acc:
                         best_acc, no_imp = acc, 0
-                        torch.save(model.state_dict(), os.path.join(args.output_dir, "model_best.pt"))
+                        torch.save(model.state_dict(),
+                                os.path.join(args.output_dir, "model_best.pt"))
                     else:
                         no_imp += 1
                         if no_imp >= args.patience:
                             stop_signal.fill_(1)
 
-                # Broadcast the single‐byte stop flag from rank 0 to all ranks
+                # broadcast the stop flag from rank 0 → all ranks
                 dist.broadcast(stop_signal, src=0, group=group)
 
-                # If any rank sees stop_signal==1, we all exit here:
+                # if any rank sees stop_signal==1 we exit on all
                 if stop_signal.item() == 1:
-                    # save metrics before exit
                     if local_rank == 0:
                         with open(os.path.join(args.output_dir, 'metrics.json'), 'w') as mf:
                             json.dump(metrics, mf, indent=2)
                     log_f.close()
                     return
+
 
             if step >= args.max_steps:
                 break
