@@ -9,7 +9,7 @@ source /home/ubuntu/tp-env/bin/activate
 
 
 # !–– New NCCL fixes ––!
-export NCCL_NET_OFI_DISABLE=1
+# export NCCL_NET_OFI_DISABLE=1
 export NCCL_SOCKET_IFNAME=ens5
 export NCCL_IB_DISABLE=1
 export NCCL_LAUNCH_TIMEOUT=1200
@@ -35,10 +35,10 @@ TP_SIZE=4
 LOSS_RATES=(0.0001)
 
 # Ensure output directory exists
-mkdir -p output_gpt2_medium_lr0.0001
+mkdir -p output_Llama3.2-1B_medium_lr0.0001
 
 for loss_rate in "${LOSS_RATES[@]}"; do
-  run_id="tp_gpt2_medium_winogrande_lr${loss_rate}_batch_size_2"
+  run_id="tp_Llama3.2-1B_winogrande_lr${loss_rate}_batch_size_2"
   echo "=== Starting $run_id ==="
 
   $TORCHRUN \
@@ -47,7 +47,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
     --master_port   $MASTER_PORT \
     src/pytorch_train_tp.py \
       --tensor_parallel_size $TP_SIZE \
-      --model_name           "gpt2-medium" \
+      --model_name           "gpt2-large" \
       --dataset              "winogrande" \
       --batch_size           2 \
       --max_length           128 \
@@ -60,7 +60,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
       --eval_steps           100 \
       --patience             3 \
       --max_steps            100000 \
-      --output_dir           "output_gpt2_medium_lr0.0001/${run_id}"
+      --output_dir           "output_Llama3.2-1B_lr0.0001/${run_id}"
 
   echo "=== Completed $run_id ==="
   echo
