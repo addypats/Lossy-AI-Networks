@@ -56,7 +56,7 @@ for dataset in "${DATASETS[@]}"; do
         --model_name           "meta-llama/Llama-3.2-1B" \
         --dataset              $dataset \
         --batch_size           8 \
-        --max_length           128 \
+        --max_length           256 \
         --learning_rate        3e-5 \
         --weight_decay         0.01 \
         --loss_rate            $loss_rate \
