@@ -51,12 +51,15 @@ echo
   # Decide on the actual flag to pass into the Python script
   if [ "$FP_FLAGS" = "fp16" ]; then
     fp_flag="--fp16"
+    echo
+    echo "=== Starting with precision ${fp_flag} ===\n"
+    echo
   else
     fp_flag=""   # no flag for fp32
+    echo
+    echo "=== Starting with precision --fp32 ===\n"
+    echo
   fi
-  echo
-  echo "=== Starting with precision ${fp_flag} ===\n"
-  echo
   for tp_size in "${TP_SIZE[@]}"; do
   echo
     echo "=== Starting tensor parallelism with size ${tp_size} ==="
