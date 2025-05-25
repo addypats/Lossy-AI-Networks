@@ -46,10 +46,10 @@ FP_FLAGS=(fp32 fp16)
 # Ensure output directory exists
 mkdir -p output_Llama3.2-1B
 
-for fp_flag in "${FP_FLAGS[@]}"; do
+for temp_flag in "${FP_FLAGS[@]}"; do
 echo
   # Decide on the actual flag to pass into the Python script
-  if [ "$FP_FLAGS" = "fp16" ]; then
+  if [ "$temp_flag" = "fp16" ]; then
     fp_flag="--fp16"
     echo
     echo "=== Starting with precision ${fp_flag} ===\n"
