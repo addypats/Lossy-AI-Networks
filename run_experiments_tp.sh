@@ -39,13 +39,19 @@ LOSS_RATES=(0)
 # DATASETS=(winogrande mnli hellaswag piqa)
 DATASETS=("winogrande")
 
-# FP Flags
+# Precision Flags
 FP_FLAGS=(fp32 fp16)
 
 # Ensure output directory exists
 mkdir -p output_Llama3.2-1B
 
 for fp_flag in "${FP_FLAGS[@]}"; do
+  # Decide on the actual flag to pass into the Python script
+  if [ "$FP_FLAGS" = "fp16" ]; then
+    fp_flag="--fp16"
+  else
+    fp_flag=""   # no flag for fp32
+  fi
   echo "=== Starting with precision ${fp_flag} ==="
   for tp_size in "${TP_SIZE[@]}"; do
     echo "=== Starting tensor parallelism with size ${tp_size} ==="
