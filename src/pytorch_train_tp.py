@@ -317,6 +317,7 @@ from sklearn.metrics import accuracy_score
 
 from comms import LossyNetwork
 from parallel_layers import RowParallelLinear
+from data import get_dataset
 
 def replace_linears(module: nn.Module, world_size: int, group: dist.ProcessGroup):
     """
@@ -396,6 +397,14 @@ def train_to_accuracy(args):
     world_size = args.tensor_parallel_size
     group = dist.group.WORLD
 
+    # --- Load dataset config ---
+    with open("src/config.yaml") as cf:
+        dataset_config = yaml.safe_load(cf)[args.dataset]
+
+    num_labels     = dataset_config['num_labels']
+    args.target_accuracy = dataset_config['target_acc']
+    report_ttac    = dataset_config.get('report_ttac', [])
+
     # --- Prepare output directory and logs ---
     os.makedirs(args.output_dir, exist_ok=True)
     # Save training arguments
@@ -409,18 +418,18 @@ def train_to_accuracy(args):
     # Prepare metrics list
     metrics = []
 
-    # --- Dataset loading ---
-    if args.dataset == "winogrande":
-        ds = load_dataset("allenai/winogrande", "winogrande_l", trust_remote_code=True)
-        train_ds, eval_ds = ds["train"], ds["validation"]
-        num_labels = 2
-    else:
-        raise ValueError(f"Unsupported dataset: {args.dataset}")
+    # # --- Dataset loading ---
+    # if args.dataset == "winogrande":
+    #     ds = load_dataset("allenai/winogrande", "winogrande_l", trust_remote_code=True)
+    #     train_ds, eval_ds = ds["train"], ds["validation"]
+    #     num_labels = 2
+    # else:
+    #     raise ValueError(f"Unsupported dataset: {args.dataset}")
 
-    # apply sample limits
-    if args.max_samples > 0:
-        train_ds = train_ds.select(range(min(args.max_samples, len(train_ds))))
-        eval_ds  = eval_ds.select(range(min(args.max_samples // 5, len(eval_ds))))
+    # # apply sample limits
+    # if args.max_samples > 0:
+    #     train_ds = train_ds.select(range(min(args.max_samples, len(train_ds))))
+    #     eval_ds  = eval_ds.select(range(min(args.max_samples // 5, len(eval_ds))))
 
     # --- Model & Tokenizer ---
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -446,24 +455,29 @@ def train_to_accuracy(args):
     replace_linears(backbone, world_size, group)
     model.to(torch.cuda.current_device())
 
-    # --- Preprocessing for Winogrande ---
-    def preprocess(batch):
-        sentence = batch["sentence"]
-        o1, o2 = batch["option1"], batch["option2"]
-        placeholder = "_" if "_" in sentence else "___"
-        s1 = sentence.replace(placeholder, o1)
-        s2 = sentence.replace(placeholder, o2)
-        label = 0 if batch["answer"] == '1' else 1
-        enc = tokenizer([s1, s2], truncation=True, padding="max_length",
-                        max_length=args.max_length, return_tensors="pt")
-        return {'input_ids': enc['input_ids'][label].tolist(),
-                'attention_mask': enc['attention_mask'][label].tolist(),
-                'labels': label}
+    # # --- Preprocessing for Winogrande ---
+    # def preprocess(batch):
+    #     sentence = batch["sentence"]
+    #     o1, o2 = batch["option1"], batch["option2"]
+    #     placeholder = "_" if "_" in sentence else "___"
+    #     s1 = sentence.replace(placeholder, o1)
+    #     s2 = sentence.replace(placeholder, o2)
+    #     label = 0 if batch["answer"] == '1' else 1
+    #     enc = tokenizer([s1, s2], truncation=True, padding="max_length",
+    #                     max_length=args.max_length, return_tensors="pt")
+    #     return {'input_ids': enc['input_ids'][label].tolist(),
+    #             'attention_mask': enc['attention_mask'][label].tolist(),
+    #             'labels': label}
 
-    train_ds = train_ds.map(preprocess, remove_columns=["sentence","option1","option2","answer"])
-    eval_ds  = eval_ds.map(preprocess, remove_columns=["sentence","option1","option2","answer"])
+    # train_ds = train_ds.map(preprocess, remove_columns=["sentence","option1","option2","answer"])
+    # eval_ds  = eval_ds.map(preprocess, remove_columns=["sentence","option1","option2","answer"])
+    # train_ds.set_format(type='torch', columns=['input_ids','attention_mask','labels'])
+    # eval_ds.set_format(type='torch', columns=['input_ids','attention_mask','labels'])
+
+    # --- Dataset loading via data.py ---
+    train_ds, eval_ds = get_dataset(args, tokenizer)
     train_ds.set_format(type='torch', columns=['input_ids','attention_mask','labels'])
-    eval_ds.set_format(type='torch', columns=['input_ids','attention_mask','labels'])
+    eval_ds.set_format(type='torch',   columns=['input_ids','attention_mask','labels'])
 
     # --- Distributed DataLoaders ---
     train_sampler = DistributedSampler(train_ds, num_replicas=world_size,

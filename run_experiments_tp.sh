@@ -32,38 +32,45 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 TP_SIZE=4
 
 # Loss-rate grid
-LOSS_RATES=(0.0001)
+# LOSS_RATES=(0 0.001 0.005 0.01)
+LOSS_RATES=(0)
+
+# Datasets
+# DATASETS=(winogrande mnli hellaswag piqa)
+DATASETS=("winogrande")
 
 # Ensure output directory exists
-mkdir -p output_Llama3.2-1B_medium_lr0.0001
+mkdir -p output_Llama3.2-1B
 
-for loss_rate in "${LOSS_RATES[@]}"; do
-  run_id="tp_Llama3.2-1B_winogrande_lr${loss_rate}_batch_size_2"
-  echo "=== Starting $run_id ==="
+for dataset in "${DATASETS[@]}"; do
+  for loss_rate in "${LOSS_RATES[@]}"; do
+    run_id="tp_Llama3.2-1B_${DATASETS[@]}_lr${loss_rate}_batch_size_8"
+    echo "=== Starting $run_id ==="
 
-  $TORCHRUN \
-    --nproc_per_node $TP_SIZE \
-    --master_addr   $MASTER_ADDR \
-    --master_port   $MASTER_PORT \
-    src/pytorch_train_tp.py \
-      --tensor_parallel_size $TP_SIZE \
-      --model_name           "meta-llama/Llama-3.2-1B" \
-      --dataset              "winogrande" \
-      --batch_size           2 \
-      --max_length           128 \
-      --learning_rate        3e-5 \
-      --weight_decay         0.01 \
-      --loss_rate            $loss_rate \
-      --seed                 1234 \
-      --max_samples          0 \
-      --target_accuracy      0.75 \
-      --eval_steps           100 \
-      --patience             3 \
-      --max_steps            100000 \
-      --output_dir           "output_Llama3.2-1B_lr0.0001/${run_id}"
+    $TORCHRUN \
+      --nproc_per_node $TP_SIZE \
+      --master_addr   $MASTER_ADDR \
+      --master_port   $MASTER_PORT \
+      src/pytorch_train_tp.py \
+        --tensor_parallel_size $TP_SIZE \
+        --model_name           "meta-llama/Llama-3.2-1B" \
+        --dataset              $dataset \
+        --batch_size           8 \
+        --max_length           128 \
+        --learning_rate        3e-5 \
+        --weight_decay         0.01 \
+        --loss_rate            $loss_rate \
+        --seed                 1234 \
+        --max_samples          0 \
+        --target_accuracy      0.75 \
+        --eval_steps           100 \
+        --patience             3 \
+        --max_steps            100000 \
+        --output_dir           "output_Llama3.2-1B/$run_id" \
 
-  echo "=== Completed $run_id ==="
-  echo
+    echo "=== Completed $run_id ==="
+    echo
+  done
 done
 
 echo "All tensor-parallel runs done."

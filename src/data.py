@@ -13,6 +13,8 @@ def get_dataset(args, tokenizer):
         return get_arc(tokenizer, args)
     elif args.dataset == "hellaswag":
         return get_hellaswag(tokenizer, args)
+    elif args.dataset == "piqa": 
+        return get_piqa(tokenizer, args)
     else:
         raise ValueError(f"Dataset {args.dataset} not supported.")
 
@@ -196,3 +198,30 @@ def get_hellaswag(tokenizer, args):
     
     return train_dataset, eval_dataset
 
+def get_piqa(tokenizer, args):
+    max_length = args.max_length if args.max_length > 0 else 256
+    dataset = load_dataset("piqa", trust_remote_code=True)
+    
+    def preprocess(data):
+        
+        goal = data["goal"]
+        sol1 = data['sol1']
+        sol2 = data['sol2']
+                
+        input = "Which of the following is a better solution to the problem?\n\n" + f" 1) {goal} {sol1} \n 2) {goal} {sol2}"
+        label = data["label"]
+
+        
+        return {
+            'input_ids': tokenizer(input, truncation=True, padding="max_length", max_length=max_length)["input_ids"],
+            'attention_mask': tokenizer(input, truncation=True, padding="max_length", max_length=max_length)["attention_mask"],
+            'labels': label
+        }
+    
+    train_dataset = dataset["train"]
+    eval_dataset = dataset["validation"]
+
+    train_dataset = train_dataset.map(preprocess, remove_columns=["goal", "sol1", "sol2", "label"])
+    eval_dataset = eval_dataset.map(preprocess, remove_columns=["goal", "sol1", "sol2", "label"])
+    
+    return train_dataset, eval_dataset
