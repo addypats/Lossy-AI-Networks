@@ -625,6 +625,7 @@ if __name__ == "__main__":
     parser.add_argument('--learning_rate', type=float, default=3e-5)
     parser.add_argument('--weight_decay', type=float, default=0.01)
     parser.add_argument('--loss_rate', type=float, default=0.001)
+    parser.add_argument("--fp16", action="store_true", help="Enable mixed-precision training (wraps forward/backward in autocast + GradScaler)")
     parser.add_argument('--seed', type=int, default=1234)
     parser.add_argument('--max_samples', type=int, default=0)
     parser.add_argument('--target_accuracy', type=float, default=0.75)

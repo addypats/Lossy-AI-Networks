@@ -29,7 +29,7 @@ export MASTER_PORT=12355
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # Tensor-parallel world size
-TP_SIZE=4
+TP_SIZE=(2 4)
 
 # Loss-rate grid
 # LOSS_RATES=(0 0.001 0.005 0.01)
@@ -39,37 +39,48 @@ LOSS_RATES=(0)
 # DATASETS=(winogrande mnli hellaswag piqa)
 DATASETS=("winogrande")
 
+# FP Flags
+FP_FLAGS=(fp32 fp16)
+
 # Ensure output directory exists
 mkdir -p output_Llama3.2-1B
 
-for dataset in "${DATASETS[@]}"; do
-  for loss_rate in "${LOSS_RATES[@]}"; do
-    run_id="tp_Llama3.2-1B_${DATASETS[@]}_lr${loss_rate}_batch_size_8"
-    echo "=== Starting $run_id ==="
+for fp_flag in "${FP_FLAGS[@]}"
+  echo "=== Starting with precision $fp_flag ==="
+  for tp_size in "${TP_SIZE[@]}"; do
+    echo "=== Starting tensor parallelism with size $tp_size ==="
+    for dataset in "${DATASETS[@]}"; do
+      echo "=== Starting with dataset $dataset ==="
+      for loss_rate in "${LOSS_RATES[@]}"; do
+        run_id="tp_Llama3.2-1B_precision-${fp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8"
+        echo "=== Starting $run_id ==="
 
-    $TORCHRUN \
-      --nproc_per_node $TP_SIZE \
-      --master_addr   $MASTER_ADDR \
-      --master_port   $MASTER_PORT \
-      src/pytorch_train_tp.py \
-        --tensor_parallel_size $TP_SIZE \
-        --model_name           "meta-llama/Llama-3.2-1B" \
-        --dataset              $dataset \
-        --batch_size           8 \
-        --max_length           128 \
-        --learning_rate        3e-5 \
-        --weight_decay         0.01 \
-        --loss_rate            $loss_rate \
-        --seed                 1234 \
-        --max_samples          0 \
-        --target_accuracy      0.75 \
-        --eval_steps           100 \
-        --patience             3 \
-        --max_steps            100000 \
-        --output_dir           "output_Llama3.2-1B/$run_id" \
+        $TORCHRUN \
+          --nproc_per_node $tp_size \
+          --master_addr   $MASTER_ADDR \
+          --master_port   $MASTER_PORT \
+          src/pytorch_train_tp.py \
+            --tensor_parallel_size $tp_size \
+            --model_name           "meta-llama/Llama-3.2-1B" \
+            --dataset              $dataset \
+            --batch_size           8 \
+            --max_length           256 \
+            --learning_rate        3e-5 \
+            --weight_decay         0.01 \
+            --loss_rate            $loss_rate \
+            --fp16                 $fp_flag \
+            --seed                 1234 \
+            --max_samples          0 \
+            --target_accuracy      0.75 \
+            --eval_steps           100 \
+            --patience             3 \
+            --max_steps            100000 \
+            --output_dir           "output_Llama3.2-1B/$run_id" \
 
-    echo "=== Completed $run_id ==="
-    echo
+        echo "=== Completed $run_id ==="
+        echo
+      done
+    done
   done
 done
 
