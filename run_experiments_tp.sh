@@ -45,7 +45,7 @@ FP_FLAGS=(fp32 fp16)
 # Ensure output directory exists
 mkdir -p output_Llama3.2-1B
 
-for fp_flag in "${FP_FLAGS[@]}"
+for fp_flag in "${FP_FLAGS[@]}"; do
   echo "=== Starting with precision ${fp_flag} ==="
   for tp_size in "${TP_SIZE[@]}"; do
     echo "=== Starting tensor parallelism with size ${tp_size} ==="
