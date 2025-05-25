@@ -46,11 +46,11 @@ FP_FLAGS=(fp32 fp16)
 mkdir -p output_Llama3.2-1B
 
 for fp_flag in "${FP_FLAGS[@]}"
-  echo "=== Starting with precision $fp_flag ==="
+  echo "=== Starting with precision ${fp_flag} ==="
   for tp_size in "${TP_SIZE[@]}"; do
-    echo "=== Starting tensor parallelism with size $tp_size ==="
+    echo "=== Starting tensor parallelism with size ${tp_size} ==="
     for dataset in "${DATASETS[@]}"; do
-      echo "=== Starting with dataset $dataset ==="
+      echo "=== Starting with dataset ${dataset} ==="
       for loss_rate in "${LOSS_RATES[@]}"; do
         run_id="tp_Llama3.2-1B_precision-${fp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8"
         echo "=== Starting $run_id ==="
