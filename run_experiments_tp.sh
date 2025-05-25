@@ -69,7 +69,7 @@ echo
       echo "=== Starting with dataset ${dataset} ==="
       echo
       for loss_rate in "${LOSS_RATES[@]}"; do
-        run_id="tp_Llama3.2-1B_precision-${fp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8"
+        run_id="tp_Llama3.2-1B_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8"
         echo
         echo "=== Starting $run_id ==="
         echo
