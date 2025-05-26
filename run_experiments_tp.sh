@@ -84,7 +84,7 @@ echo
             --dataset              $dataset \
             --batch_size           8 \
             --max_length           256 \
-            --learning_rate        3e-5 \
+            --learning_rate        2e-5 \
             --weight_decay         0.01 \
             --loss_rate            $loss_rate \
             --fp16                 $fp_flag \
@@ -92,7 +92,7 @@ echo
             --max_samples          0 \
             --target_accuracy      0.75 \
             --eval_steps           100 \
-            --patience             3 \
+            --patience             5 \
             --max_steps            100000 \
             --output_dir           "output_Llama3.2-1B/$run_id" \
 
