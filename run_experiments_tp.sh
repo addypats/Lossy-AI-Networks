@@ -38,7 +38,7 @@ LOSS_RATES=(0 0.001 0.005 0.01)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("piqa")
+DATASETS=("mnli" "hellaswag")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
@@ -93,7 +93,7 @@ echo
             --max_samples          0 \
             --target_accuracy      0.75 \
             --eval_steps           100 \
-            --patience             5 \
+            --patience             3 \
             --max_steps            100000 \
             --output_dir           "output_Llama3.2-1B/$run_id" \
 
