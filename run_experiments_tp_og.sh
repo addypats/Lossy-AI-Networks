@@ -1,6 +1,9 @@
 #!/bin/bash
 # Launch 4 ranks for tensor parallelism (one per GPU)
 
+# Original running script for Tensor Parallelism
+# Still works. The other one is a modification of this with a little additional things
+
 source /home/ubuntu/tp-env/bin/activate
 
 export NCCL_DEBUG=WARN
