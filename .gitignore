@@ -10,8 +10,6 @@ venv/
 *.pt
 dist-venv/
 output_pics/
-/output_pics.py
 /Output Pics.xlsx
 /figures/
-/~$Output Pics.xlsx
-/run_experiments_tp_og.sh
+/src/trainer_dist_manual.py
