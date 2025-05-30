@@ -33,16 +33,16 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 TP_SIZE=(4)
 
 # Loss-rate grid
-LOSS_RATES=(0 0.001 0.005 0.01)
-# LOSS_RATES=(0)
+# LOSS_RATES=(0 0.001 0.005 0.01)
+LOSS_RATES=(0.001)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("hellaswag")
+DATASETS=("winogrande")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
-FP_FLAGS=(fp32)
+FP_FLAGS=(fp16)
 
 # Ensure output directory exists
 mkdir -p output_Llama3.2-1B
@@ -75,27 +75,52 @@ echo
         echo "=== Starting $run_id ==="
         echo
 
+        # Original Script
+        # $TORCHRUN \
+        #   --nproc_per_node $tp_size \
+        #   --master_addr   $MASTER_ADDR \
+        #   --master_port   $MASTER_PORT \
+        #   src/pytorch_train_tp.py \
+        #     --tensor_parallel_size $tp_size \
+        #     --model_name           "meta-llama/Llama-3.2-1B" \
+        #     --dataset              $dataset \
+        #     --batch_size           8 \
+        #     --max_length           256 \
+        #     --learning_rate        2e-5 \
+        #     --weight_decay         0.01 \
+        #     --loss_rate            $loss_rate \
+        #     --fp16                 $fp_flag \
+        #     --seed                 1234 \
+        #     --max_samples          0 \
+        #     --target_accuracy      0.75 \
+        #     --eval_steps           100 \
+        #     --patience             3 \
+        #     --max_steps            100000 \
+        #     --output_dir           "output_Llama3.2-1B/$run_id" \
+
+        # New set of parameters - mod tp script
         $TORCHRUN \
           --nproc_per_node $tp_size \
           --master_addr   $MASTER_ADDR \
           --master_port   $MASTER_PORT \
-          src/pytorch_train_tp.py \
+          src/Mod_src_TP/pytorch_train_tp.py \
             --tensor_parallel_size $tp_size \
             --model_name           "meta-llama/Llama-3.2-1B" \
             --dataset              $dataset \
             --batch_size           8 \
             --max_length           256 \
-            --learning_rate        2e-5 \
+            --learning_rate        5e-5 \
             --weight_decay         0.01 \
             --loss_rate            $loss_rate \
-            --fp16                 $fp_flag \
+            --fp16 \
             --seed                 1234 \
             --max_samples          0 \
             --target_accuracy      0.75 \
-            --eval_steps           100 \
+            --eval_steps           50 \
             --patience             3 \
             --max_steps            100000 \
             --output_dir           "output_Llama3.2-1B/$run_id" \
+            --run_name $run_id
 
         echo "=== Completed $run_id ==="
         echo
