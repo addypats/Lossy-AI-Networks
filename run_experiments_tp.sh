@@ -38,7 +38,7 @@ LOSS_RATES=(0.001)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("winogrande")
+DATASETS=("hellaswag")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
@@ -70,7 +70,7 @@ echo
       echo "=== Starting with dataset ${dataset} ==="
       echo
       for loss_rate in "${LOSS_RATES[@]}"; do
-        run_id="tp_Llama3.2-1B_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8"
+        run_id="tp_Llama3.2-1B_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8_test"
         echo
         echo "=== Starting $run_id ==="
         echo
@@ -116,11 +116,11 @@ echo
             --seed                 1234 \
             --max_samples          0 \
             --target_accuracy      0.75 \
-            --eval_steps           50 \
+            --eval_steps           100 \
             --patience             3 \
             --max_steps            100000 \
             --output_dir           "output_Llama3.2-1B/$run_id" \
-            --run_name $run_id
+        #    --run_name $run_id
 
         echo "=== Completed $run_id ==="
         echo

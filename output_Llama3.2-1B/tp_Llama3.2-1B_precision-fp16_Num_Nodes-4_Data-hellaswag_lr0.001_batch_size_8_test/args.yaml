@@ -1,0 +1,17 @@
+batch_size: 8
+dataset: hellaswag
+eval_steps: 100
+fp16: true
+learning_rate: 5.0e-05
+local_rank: 0
+loss_rate: 0.001
+max_length: 256
+max_samples: 0
+max_steps: 100000
+model_name: meta-llama/Llama-3.2-1B
+output_dir: output_Llama3.2-1B/tp_Llama3.2-1B_precision-fp16_Num_Nodes-4_Data-hellaswag_lr0.001_batch_size_8_test
+patience: 3
+seed: 1234
+target_accuracy: 0.8
+tensor_parallel_size: 4
+weight_decay: 0.01
