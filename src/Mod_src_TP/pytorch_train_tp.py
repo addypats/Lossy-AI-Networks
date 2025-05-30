@@ -31,7 +31,8 @@ def train_step(model, inputs, optimizer, network, use_fp16, scaler, log_f, step)
                 param.grad = network.receive(param.grad, network.send(param.grad))
                 norm_val = param.grad.norm().item()
                 log_f.write(f"Step {step} | FP16 | Grad Norm [{name}]: {norm_val:.6f}\n")
-                wandb.log({f"grad_norm/{name}": norm_val}, step=step)
+                if dist.get_rank() == 0:
+                    wandb.log({f"grad_norm/{name}": norm_val}, step=step)
         scaler.step(optimizer)
         scaler.update()
     else:
@@ -43,10 +44,12 @@ def train_step(model, inputs, optimizer, network, use_fp16, scaler, log_f, step)
                 param.grad = network.receive(param.grad, network.send(param.grad))
                 norm_val = param.grad.norm().item()
                 log_f.write(f"Step {step} | FP32 | Grad Norm [{name}]: {norm_val:.6f}\n")
-                wandb.log({f"grad_norm/{name}": norm_val}, step=step)
+                if dist.get_rank() == 0:
+                    wandb.log({f"grad_norm/{name}": norm_val}, step=step)
         optimizer.step()
     optimizer.zero_grad()
-    wandb.log({"train/loss": loss.item()}, step=step)
+    if dist.get_rank() == 0:
+        wandb.log({"train/loss": loss.item()}, step=step)
     return loss.item()
 
 def evaluate(model, eval_loader, device):
@@ -148,7 +151,8 @@ def train_to_accuracy(args):
                     print(f"Step {step} | Acc {acc:.4f} | Time {elapsed:.1f}s")
                     log_f.write(f"Step {step} | Acc {acc:.4f} | Time {elapsed:.1f}s\n")
                     log_f.flush()
-                    wandb.log({"eval/accuracy": acc, "time": elapsed}, step=step)
+                    if dist.get_rank() == 0:
+                        wandb.log({"eval/accuracy": acc, "time": elapsed}, step=step)
                     metrics.append({'step': step, 'accuracy': acc, 'time': elapsed})
 
                     if acc >= args.target_accuracy:
