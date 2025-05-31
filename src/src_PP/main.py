@@ -717,9 +717,9 @@ class Stage0(nn.Module):
             # ──────────────────────────────────────────────────────────────────────
             # Force-reassign rotary_emb on every attention in this block:
             # (so that block.self_attn.rotary_emb is never None on cuda:0)
-            blk.self_attn.rotary_emb = LlamaRotaryEmbedding(
-                full_model.model.config
-            ).to(self.device)
+            # blk.self_attn.rotary_emb = LlamaRotaryEmbedding(
+            #     full_model.model.config
+            # ).to(self.device)
             # ──────────────────────────────────────────────────────────────────────
             self.layers.append(blk)
 
@@ -789,9 +789,9 @@ class StageMiddle(nn.Module):
             blk = blk.to(self.device)
             # ───────────────────────────────────────────────────────────────────────────
             # Force-reassign rotary_emb on every attention in this block:
-            blk.self_attn.rotary_emb = LlamaRotaryEmbedding(
-                full_model.model.config
-            ).to(self.device)
+            # blk.self_attn.rotary_emb = LlamaRotaryEmbedding(
+            #     full_model.model.config
+            # ).to(self.device)
             # ───────────────────────────────────────────────────────────────────────────
             self.layers.append(blk)
 
@@ -848,9 +848,9 @@ class StageLast(nn.Module):
             blk = blk.to(self.device)
             # ───────────────────────────────────────────────────────────────────────────
             # Force-reassign rotary_emb on every attention in this block:
-            blk.self_attn.rotary_emb = LlamaRotaryEmbedding(
-                full_model.model.config
-            ).to(self.device)
+            # blk.self_attn.rotary_emb = LlamaRotaryEmbedding(
+            #     full_model.model.config
+            # ).to(self.device)
             # ───────────────────────────────────────────────────────────────────────────
             self.layers.append(blk)
 
