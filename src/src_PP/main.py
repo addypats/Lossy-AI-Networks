@@ -719,6 +719,8 @@ class Stage0(nn.Module):
         # If we had overwritten rotary_emb here, we risk clobbering it.
         # ──────────────────────────────────────────────
 
+# For git, remove later
+
     def forward(self, input_ids: torch.LongTensor, attention_mask: torch.LongTensor):
         """
         input_ids:      LongTensor of shape [batch, seq_len] on cuda:0
