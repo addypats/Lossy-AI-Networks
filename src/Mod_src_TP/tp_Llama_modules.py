@@ -336,9 +336,13 @@ class TensorParallelLlamaAttention(LlamaAttention):
         else:
             self.o_bias = None
 
-        # Dropout layers
-        self.attn_dropout = nn.Dropout(llama_config.attention_dropout)
-        self.resid_dropout = nn.Dropout(llama_config.hidden_dropout)
+        # # Dropout layers
+        # self.attn_dropout = nn.Dropout(llama_config.attention_dropout)
+        # self.resid_dropout = nn.Dropout(llama_config.hidden_dropout)
+        
+        # Dropout layers (use the HF‐defined names)
+        self.attn_dropout = nn.Dropout(llama_config.attention_dropout_prob)
+        self.resid_dropout = nn.Dropout(llama_config.hidden_dropout_prob)
 
         # Load pretrained shards into our parameters
         # -----------------------------------------------------------
