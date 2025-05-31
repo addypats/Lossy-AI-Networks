@@ -284,14 +284,17 @@ class TensorParallelLlamaAttention(nn.Module):
         pretrained_o_bias:     full [H] bias from pretrained o_proj (or None)
         """
         # super().__init__()
-        super().__init__(
-            llama_config,
-            layer_idx,
-            use_cache=False,
-            num_key_value_heads=llama_config.num_key_value_heads,
-            head_dim=llama_config.hidden_size // llama_config.num_attention_heads,
-            # (no rotary_embedding arguments)
-        )
+        # super().__init__(
+        #     llama_config,
+        #     layer_idx,
+        #     use_cache=False,
+        #     num_key_value_heads=llama_config.num_key_value_heads,
+        #     head_dim=llama_config.hidden_size // llama_config.num_attention_heads,
+        #     # (no rotary_embedding arguments)
+        # )
+        
+        super().__init__(llama_config, layer_idx)
+        
         self.world_size = world_size
         self.group = group
         self.hidden_size = llama_config.hidden_size
