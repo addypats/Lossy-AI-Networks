@@ -704,11 +704,7 @@ class Stage0(nn.Module):
         
         # Initialize rotary embeddings for all layers
         for layer in self.layers:
-            layer.self_attn.rotary_emb = LlamaRotaryEmbedding(
-                dim=full_model.config.hidden_size // full_model.config.num_attention_heads,
-                max_position_embeddings=full_model.config.max_position_embeddings,
-                base=full_model.config.rope_theta
-            ).to(self.device)
+            layer.self_attn.rotary_emb = LlamaRotaryEmbedding(config=full_model.config).to(stage.device)
 
     def forward(self, input_ids: torch.LongTensor, attention_mask: torch.LongTensor):
         h = self.embed(input_ids)
