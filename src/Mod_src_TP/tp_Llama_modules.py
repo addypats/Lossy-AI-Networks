@@ -574,8 +574,11 @@ class TensorParallelLlamaMLP(nn.Module):
 # --------------------------------------------------------------------------------
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer as _HF_LlamaDecoderLayer
+from transformers.models.llama.modeling_llama import LlamaAttention, LlamaConfig, LlamaRMSNorm
 
-class TensorParallelLlamaDecoderLayer(nn.Module):
+
+#class TensorParallelLlamaDecoderLayer(nn.Module):
+class TensorParallelLlamaAttention(LlamaAttention):
     def __init__(self,
                  llama_config: LlamaConfig,
                  layer_idx: int,
