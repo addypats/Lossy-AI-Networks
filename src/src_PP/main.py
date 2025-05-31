@@ -694,88 +694,172 @@ def zero_some_fraction(tensor: torch.Tensor, percent: float) -> torch.Tensor:
 # 2.A) Stage0: Embedding + transformer blocks
 # ============================================
 class Stage0(nn.Module):
+    """
+    Stage 0: the embedding layer + a slice of transformer blocks.
+    Expects: input_ids (LongTensor) and attention_mask (LongTensor), both on cuda:0
+    Returns: (hidden_states, attention_mask, position_ids)  all on cuda:0
+    """
     def __init__(self, full_model, layer_start: int, layer_end: int, device: str):
         super().__init__()
         self.device = torch.device(device)
+
+        # (a) The embedding layer is the same one inside `full_model.model.embed_tokens`
         self.embed = full_model.model.embed_tokens.to(self.device)
+
+        # (b) A contiguous slice of transformer blocks from layer_start to layer_end
         self.layers = nn.ModuleList(
             [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
         )
-        
-        # Initialize rotary embeddings for all layers
-        for layer in self.layers:
-            layer.self_attn.rotary_emb = LlamaRotaryEmbedding(config=full_model.config).to(stage.device)
+
+        # ──────────────────────────────────────────────
+        # NOTE: We do NOT re-assign rotary_emb here.  The original
+        # LlamaForSequenceClassification initialization already did:
+        #    block.self_attn.rotary_emb = LlamaRotaryEmbedding(config).to(block.device)
+        # under the hood.  By simply moving `blk.to(self.device)`, we keep that `rotary_emb`.
+        # If we had overwritten rotary_emb here, we risk clobbering it.
+        # ──────────────────────────────────────────────
 
     def forward(self, input_ids: torch.LongTensor, attention_mask: torch.LongTensor):
-        h = self.embed(input_ids)
+        """
+        input_ids:      LongTensor of shape [batch, seq_len] on cuda:0
+        attention_mask: LongTensor of shape [batch, seq_len] on cuda:0
+
+        Returns:
+          - hidden_states: FloatTensor [batch, seq_len, hidden_dim] on cuda:0
+          - attention_mask: same attention_mask, passed onward
+          - position_ids: LongTensor [batch, seq_len] on cuda:0
+        """
+        # 1) Embed tokens
+        h = self.embed(input_ids)  # [batch, seq_len, hidden_dim]
+
+        # 2) Build position_ids = [0,1,2,..., seq_len-1] for each example in the batch
         batch_size, seq_len = input_ids.size()
-        
-        # Generate position_ids once and propagate
-        position_ids = torch.arange(seq_len, device=self.device)
-        position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_len)
-        
+        position_ids = torch.arange(seq_len, device=self.device).unsqueeze(0).expand(batch_size, seq_len)
+        # shape: [batch, seq_len]
+
+        # 3) Pass through each transformer block, supplying attention_mask & position_ids
         for block in self.layers:
+            # block(...) returns a tuple (hidden_states, present_key_value) but we only need [0]
             h = block(
                 h,
                 attention_mask=attention_mask,
                 position_ids=position_ids
-            )[0]
-            
-        return h, attention_mask, position_ids  # Return position_ids  
+            )[0]  # [batch, seq_len, hidden_dim]
+
+        # 4) Return hidden+mask+pos_ids for next stage
+        return h, attention_mask, position_ids
+  
 
 
 # ============================================
 # 2.B) StageMiddle: Intermediate transformer blocks
 # ============================================
 class StageMiddle(nn.Module):
+    """
+    Stage k (1 ≤ k ≤ N-2): holds a contiguous slice of transformer blocks,
+    each expecting (hidden_states, attention_mask, position_ids) on cuda:k.
+    Returns: (hidden_out, attention_mask, position_ids) on cuda:k
+    """
     def __init__(self, full_model, layer_start: int, layer_end: int, device: str):
         super().__init__()
         self.device = torch.device(device)
+
+        # A contiguous slice of transformer blocks [layer_start:layer_end]
         self.layers = nn.ModuleList(
             [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
         )
 
-    def forward(self, hidden_states: torch.FloatTensor, attention_mask: torch.LongTensor, position_ids: torch.LongTensor):
+        # Again—DO NOT reassign rotary_emb here.  The pre-trained blocks already have it.
+
+    def forward(self,
+                hidden_states: torch.FloatTensor,
+                attention_mask: torch.LongTensor,
+                position_ids: torch.LongTensor):
+        """
+        hidden_states:  FloatTensor [batch, seq_len, hidden_dim] on cuda:k
+        attention_mask: LongTensor [batch, seq_len] on cuda:k
+        position_ids:   LongTensor [batch, seq_len] on cuda:k
+
+        Returns: (hidden_out, attention_mask, position_ids) on cuda:k
+        """
         h = hidden_states
+        # We reuse the same position_ids throughout the slice of blocks
         for block in self.layers:
             h = block(
                 h,
                 attention_mask=attention_mask,
-                position_ids=position_ids  # Use passed position_ids
+                position_ids=position_ids
             )[0]
+
+        # Pass both mask + pos_ids unchanged downstream
         return h, attention_mask, position_ids
+
 
 
 # ============================================
 # 2.C) StageLast: Final transformer blocks + norm + classification head
 # ============================================
 class StageLast(nn.Module):
+    """
+    Stage N-1: the final slice of transformer blocks,
+    plus the final LayerNorm and classification head.
+    Expects: (hidden_states, attention_mask, position_ids[, labels]) on cuda:N-1
+    If `labels` is provided → return a scalar cross‐entropy loss.
+    Otherwise → return logits [batch, num_labels].
+    """
     def __init__(self, full_model, layer_start: int, layer_end: int, device: str):
         super().__init__()
         self.device = torch.device(device)
+
+        # Slice of transformer blocks [layer_start:layer_end]
         self.layers = nn.ModuleList(
             [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
         )
+
+        # Final LayerNorm
         self.final_norm = full_model.model.norm.to(self.device)
+
+        # Classification head (a linear layer on top of hidden_dim → num_labels)
         self.classifier = full_model.score.to(self.device)
 
-    def forward(self, hidden_states: torch.FloatTensor, attention_mask: torch.LongTensor, position_ids: torch.LongTensor, labels=None):
+        # Again, do NOT overwrite rotary_emb here.  The pre-trained blocks already have it.
+
+    def forward(self,
+                hidden_states: torch.FloatTensor,
+                attention_mask: torch.LongTensor,
+                position_ids: torch.LongTensor,
+                labels: torch.LongTensor = None):
+        """
+        hidden_states:  FloatTensor [batch, seq_len, hidden_dim] on cuda:N-1
+        attention_mask: LongTensor [batch, seq_len] on cuda:N-1
+        position_ids:   LongTensor [batch, seq_len] on cuda:N-1
+        labels:         LongTensor [batch] on cuda:N-1  (optional)
+
+        Returns:
+          - If `labels` is not None: a scalar loss (CrossEntropyLoss).
+          - Else: logits [batch, num_labels].
+        """
         h = hidden_states
         for block in self.layers:
             h = block(
                 h,
                 attention_mask=attention_mask,
-                position_ids=position_ids  # Use passed position_ids
+                position_ids=position_ids
             )[0]
-            
-        h_norm = self.final_norm(h)
-        cls_token = h_norm[:, 0, :]
-        logits = self.classifier(cls_token)
+
+        # Final LayerNorm
+        h_norm = self.final_norm(h)           # [batch, seq_len, hidden_dim]
+
+        # Take the hidden state at token‐0 (CLS‐like token) for classification
+        cls_token = h_norm[:, 0, :]           # [batch, hidden_dim]
+        logits = self.classifier(cls_token)   # [batch, num_labels]
 
         if labels is not None:
             loss_fct = nn.CrossEntropyLoss()
             return loss_fct(logits, labels)
+
         return logits
+
 
 
 # ============================================
@@ -874,17 +958,18 @@ def pipeline_forward_backward(stages, optimizers, input_chunks, mask_chunks, lab
                     input_grads[(stage_idx - 1, mb)] = grad
                     
             else:
-                h_in, mask_in = activations[(stage_idx - 1, mb)]
+                h_in, mask_in, pos_ids_in = activations[(stage_idx - 1, mb)]
                 h_in = h_in.to(device_list[stage_idx])
                 mask_in = mask_in.to(device_list[stage_idx])
+                pos_ids_in = pos_ids_in.to(device_list[stage_idx])
                 
                 if use_fp16:
                     with autocast():
-                        h_out, mask_out = stages[stage_idx](h_in, mask_in)
+                         h_out, mask_out, pos_ids_out = stages[stage_idx](h_in, mask_in, pos_ids_in)
                 else:
-                    h_out, mask_out = stages[stage_idx](h_in, mask_out)
+                    h_out, mask_out, pos_ids_out = stages[stage_idx](h_in, mask_in, pos_ids_in)
                 
-                activations[(stage_idx, mb)] = (h_out.detach().requires_grad_(True), mask_out)
+                activations[(stage_idx, mb)] = (h_out.detach().requires_grad_(True), mask_out, pos_ids_out)
         
         # Backward pass for oldest microbatch in pipeline
         old_mb = mb - num_stages + 1
