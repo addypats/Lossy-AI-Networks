@@ -639,65 +639,101 @@ class TensorParallelLlamaDecoderLayer(nn.Module):
             and hasattr(hf_decoder_layer.self_attn, "k_proj") \
             and hasattr(hf_decoder_layer.self_attn, "v_proj"):
 
-            q_w = hf_decoder_layer.self_attn.q_proj.weight.data   # shape [H, ?]
-            k_w = hf_decoder_layer.self_attn.k_proj.weight.data   # shape [H, Dk]
-            v_w = hf_decoder_layer.self_attn.v_proj.weight.data   # shape [H, Dv]
+            # Grab raw weight tensors
+            raw_q_w = hf_decoder_layer.self_attn.q_proj.weight.data   # could be [H, H]
+            raw_k_w = hf_decoder_layer.self_attn.k_proj.weight.data   # could be [Dk, H] or [H, Dk]
+            raw_v_w = hf_decoder_layer.self_attn.v_proj.weight.data   # could be [Dv, H] or [H, Dv]
 
-            # 1. If all three are exactly [H, H], just concat them:
-            if q_w.shape == (H, H) and k_w.shape == (H, H) and v_w.shape == (H, H):
+            # 1) Ensure Q is [H, H]
+            if raw_q_w.shape != (H, H):
+                raise RuntimeError(
+                    f"Unexpected q_proj shape {raw_q_w.shape}, expected [H, H]."
+                )
+            q_w = raw_q_w  # shape [H, H]
+
+            # 2) If K is [Dk, H], transpose → [H, Dk]. Otherwise, if it is [H, Dk], use directly.
+            if raw_k_w.shape[0] == H:
+                # K already [H, Dk]
+                k_w = raw_k_w
+            elif raw_k_w.shape[1] == H:
+                # K stored as [Dk, H], so transpose to [H, Dk]
+                k_w = raw_k_w.transpose(0, 1)
+            else:
+                raise RuntimeError(
+                    f"k_proj has shape {raw_k_w.shape}, which is neither [H, Dk] nor [Dk, H]."
+                )
+
+            # 3) Likewise for V
+            if raw_v_w.shape[0] == H:
+                v_w = raw_v_w
+            elif raw_v_w.shape[1] == H:
+                v_w = raw_v_w.transpose(0, 1)
+            else:
+                raise RuntimeError(
+                    f"v_proj has shape {raw_v_w.shape}, which is neither [H, Dv] nor [Dv, H]."
+                )
+
+            # 4) Now we have q_w: [H, H]; k_w: [H, Dk]; v_w: [H, Dv].
+            Dk = k_w.shape[1]
+            Dv = v_w.shape[1]
+
+            # If all three dims are [H, H], concatenate directly
+            if (q_w.shape == (H, H)) and (Dk == H) and (Dv == H):
                 fused_qkv_w = torch.cat([q_w, k_w, v_w], dim=1)  # [H, 3H]
             else:
-                # Possibly grouped K/V: q is [H, H], but k/v are [H, Dk], Dk < H.
-                # In that case, Dk must divide H exactly, and we tile k/v along dim=1.
-                if q_w.shape != (H, H):
+                # Must tile K and V so that their widths become H exactly
+                if (q_w.shape != (H, H)):
                     raise RuntimeError(
-                        f"Unexpected q_proj shape {q_w.shape}, expected either (H,H) or (H,3H)."
+                        f"Unexpected q_proj shape {q_w.shape}, expected [H, H]."
                     )
 
-                # Verify k_w and v_w have shape [H, Dk] where Dk divides H
-                Dk = k_w.shape[1]
-                Dv = v_w.shape[1]
-                if k_w.shape[0] != H or v_w.shape[0] != H:
-                    raise RuntimeError(
-                        f"k_proj or v_proj has incorrect batch dim: k_proj {k_w.shape}, v_proj {v_w.shape}"
-                    )
-
-                # Check that Dk and Dv both divide H exactly
+                # Check Dk and Dv divide H
                 if (H % Dk != 0) or (H % Dv != 0):
                     raise RuntimeError(
-                        f"Grouped K/V shapes must divide H. Found H={H}, Dk={Dk}, Dv={Dv}."
+                        f"Grouped K/V widths must divide H. H={H}, Dk={Dk}, Dv={Dv}."
                     )
 
-                # Tile K and V so that after tiling their width becomes H
                 reps_k = H // Dk
                 reps_v = H // Dv
                 k_w_full = k_w.repeat_interleave(reps_k, dim=1)  # [H, H]
                 v_w_full = v_w.repeat_interleave(reps_v, dim=1)  # [H, H]
-
-                # Now cat Q [H,H], K_full [H,H], V_full [H,H]
                 fused_qkv_w = torch.cat([q_w, k_w_full, v_w_full], dim=1)  # [H, 3H]
 
-            # Handle biases if present and tile similarly
-            q_b = hf_decoder_layer.self_attn.q_proj.bias.data if hf_decoder_layer.self_attn.q_proj.bias is not None else None
-            k_b = hf_decoder_layer.self_attn.k_proj.bias.data if hf_decoder_layer.self_attn.k_proj.bias is not None else None
-            v_b = hf_decoder_layer.self_attn.v_proj.bias.data if hf_decoder_layer.self_attn.v_proj.bias is not None else None
+            # 5) Handle biases similarly
+            raw_q_b = hf_decoder_layer.self_attn.q_proj.bias.data if hf_decoder_layer.self_attn.q_proj.bias is not None else None
+            raw_k_b = hf_decoder_layer.self_attn.k_proj.bias.data if hf_decoder_layer.self_attn.k_proj.bias is not None else None
+            raw_v_b = hf_decoder_layer.self_attn.v_proj.bias.data if hf_decoder_layer.self_attn.v_proj.bias is not None else None
 
-            if q_b is not None and k_b is not None and v_b is not None:
-                if q_b.shape == (H,) and k_b.shape == (H,) and v_b.shape == (H,):
-                    fused_qkv_b = torch.cat([q_b, k_b, v_b], dim=0)  # [3H]
+            if raw_q_b is not None and raw_k_b is not None and raw_v_b is not None:
+                # q_b must be [H]
+                if raw_q_b.shape != (H,):
+                    fused_qkv_b = None
                 else:
-                    # Grouped biases: tile them too
-                    if k_b.shape == (Dk,) and (H % Dk == 0):
-                        fused_k_b = k_b.repeat_interleave(H // Dk)
+                    # k_b: could be [H] or [Dk]
+                    if raw_k_b.shape == (H,):
+                        k_b_full = raw_k_b
+                    elif raw_k_b.shape == (Dk,):
+                        if H % Dk != 0:
+                            k_b_full = None
+                        else:
+                            k_b_full = raw_k_b.repeat_interleave(H // Dk)
                     else:
-                        fused_k_b = None
-                    if v_b.shape == (Dv,) and (H % Dv == 0):
-                        fused_v_b = v_b.repeat_interleave(H // Dv)
-                    else:
-                        fused_v_b = None
+                        k_b_full = None
 
-                    if fused_k_b is not None and fused_v_b is not None and q_b.shape == (H,):
-                        fused_qkv_b = torch.cat([q_b, fused_k_b, fused_v_b], dim=0)
+                    # v_b: could be [H] or [Dv]
+                    if raw_v_b.shape == (H,):
+                        v_b_full = raw_v_b
+                    elif raw_v_b.shape == (Dv,):
+                        if H % Dv != 0:
+                            v_b_full = None
+                        else:
+                            v_b_full = raw_v_b.repeat_interleave(H // Dv)
+                    else:
+                        v_b_full = None
+
+                    # If all three bias vectors are valid length H, concatenate
+                    if k_b_full is not None and v_b_full is not None:
+                        fused_qkv_b = torch.cat([raw_q_b, k_b_full, v_b_full], dim=0)  # [3H]
                     else:
                         fused_qkv_b = None
             else:
