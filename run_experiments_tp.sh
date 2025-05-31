@@ -34,11 +34,11 @@ TP_SIZE=(4)
 
 # Loss-rate grid
 # LOSS_RATES=(0 0.001 0.005 0.01)
-LOSS_RATES=(0)
+LOSS_RATES=(0.001)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("winogrande")
+DATASETS=("mnli")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
@@ -70,7 +70,7 @@ echo
       echo "=== Starting with dataset ${dataset} ==="
       echo
       for loss_rate in "${LOSS_RATES[@]}"; do
-        run_id="tp_Llama3.2-1B_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_16_test_2"
+        run_id="tp_Llama3.2-1B_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8_test_2"
         echo
         echo "=== Starting $run_id ==="
         echo
@@ -107,7 +107,7 @@ echo
             --tensor_parallel_size $tp_size \
             --model_name           "meta-llama/Llama-3.2-1B" \
             --dataset              $dataset \
-            --batch_size           16 \
+            --batch_size           8 \
             --max_length           256 \
             --learning_rate        2e-5 \
             --weight_decay         0.01 \

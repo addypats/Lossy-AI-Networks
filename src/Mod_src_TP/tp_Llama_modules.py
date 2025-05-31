@@ -22,8 +22,8 @@ def all_reduce_tensor(tensor, group):
 
 
 class TensorParallelLlamaAttention(LlamaAttention):
-    def __init__(self, config, world_size, group):
-        super().__init__(config)
+    def __init__(self, config, layer_idx, world_size, group):
+        super().__init__(config, layer_idx)
         self.world_size = world_size
         self.group = group
 
@@ -48,7 +48,7 @@ class TensorParallelLlamaAttention(LlamaAttention):
 
         # All-reduce to gather all shards of output
         attn_output = all_reduce_tensor(attn_output, self.group)
-        return self.o_proj(attn_output)
+        return self.o_proj(attn_output), attn_probs
 
 
 class TensorParallelLlamaMLP(LlamaMLP):
@@ -75,9 +75,9 @@ class TensorParallelLlamaMLP(LlamaMLP):
 
 
 class TensorParallelLlamaDecoderLayer(LlamaDecoderLayer):
-    def __init__(self, config, world_size, group):
-        super().__init__(config)
-        self.self_attn = TensorParallelLlamaAttention(config, world_size, group)
+    def __init__(self, config, layer_idx, world_size, group):
+        super().__init__(config, layer_idx)
+        self.self_attn = TensorParallelLlamaAttention(config, layer_idx, world_size, group)
         self.mlp = TensorParallelLlamaMLP(config, world_size, group)
 
 
@@ -91,6 +91,6 @@ class TensorParallelLlamaModel(LlamaModel):
 
         # Replace all decoder layers with TensorParallel versions
         self.layers = nn.ModuleList([
-            TensorParallelLlamaDecoderLayer(config, world_size, group)
-            for _ in range(config.num_hidden_layers)
+            TensorParallelLlamaDecoderLayer(config, layer_idx, world_size, group)
+            for layer_idx in range(config.num_hidden_layers)
         ])

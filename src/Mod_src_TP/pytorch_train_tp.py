@@ -465,6 +465,7 @@ from sklearn.metrics import accuracy_score
 from comms import LossyNetwork
 from data import get_dataset
 from tp_Llama_modules import TensorParallelLlamaModel
+from tp_llama_sequence_classification import TPLlamaForSequenceClassification
 
 def train_step(model, inputs, optimizer, network, use_fp16, scaler, log_f, step):
     model.train()
@@ -544,8 +545,11 @@ def train_to_accuracy(args):
         from transformers import LlamaConfig
         config = LlamaConfig.from_pretrained(args.model_name)
         config.num_labels = num_labels
-        model = TensorParallelLlamaModel(config, world_size, group)
-        model = LlamaForSequenceClassification(config=config, model=model)
+        # model = TensorParallelLlamaModel(config, world_size, group)
+        local_rank = int(os.environ["LOCAL_RANK"])
+        device = torch.device(f"cuda:{local_rank}")
+        model = TPLlamaForSequenceClassification(config, world_size, group).to(device)
+        # model = LlamaForSequenceClassification(config=config, model=model)
     else:
         model = AutoModelForSequenceClassification.from_pretrained(
             args.model_name, num_labels=num_labels, token=args.token if hasattr(args, 'token') else True
@@ -586,13 +590,20 @@ def train_to_accuracy(args):
     while step < args.max_steps:
         train_sampler.set_epoch(step)
         for batch in tqdm(train_loader, desc=f"Rank {local_rank} Step {step}", disable=(local_rank != 0)):
-            batch = {k: v.to(model.device) for k, v in batch.items()}
+            
+            # batch = {k: v.to(model.device) for k, v in batch.items()}
+            device = next(model.parameters()).device
+            batch = {k: v.to(device) for k, v in batch.items()}
+
             loss = train_step(model, batch, optimizer, network, use_fp16, scaler, log_f, step)
 
             step += 1
             if step % args.eval_steps == 0:
-                acc = evaluate(model, eval_loader, model.device)
-                stop_signal = torch.tensor(0, dtype=torch.uint8, device=model.device)
+                # acc = evaluate(model, eval_loader, model.device)
+                device = next(model.parameters()).device
+                acc = evaluate(model, eval_loader, device)
+
+                stop_signal = torch.tensor(0, dtype=torch.uint8, device=device)
 
                 if local_rank == 0:
                     elapsed = time.time() - start
