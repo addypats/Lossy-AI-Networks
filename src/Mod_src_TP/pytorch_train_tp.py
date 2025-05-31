@@ -674,7 +674,7 @@
 #     np.random.seed(args.seed)
 #     train_to_accuracy(args)
 
-
+# pytorch_train_tp.py
 
 import os
 import time
@@ -715,21 +715,31 @@ def train_step(model: nn.Module,
             outputs = model(**inputs)
             loss = outputs.loss
         scaler.scale(loss).backward()
-        # Simulate lossy gradient communication for every parameter
+
+        # 1) Simulate lossy gradient communication for TP-sharded parameters
         for name, param in model.named_parameters():
             if param.grad is not None:
-                # network.send/receive will simulate packet loss before gradient arrives
                 param.grad = network.receive(param.grad, network.send(param.grad))
                 grad_norm = param.grad.norm().item()
                 log_f.write(f"Step {step} | FP16 | Grad Norm [{name}]: {grad_norm:.6f}\n")
                 if dist.get_rank() == 0:
                     wandb.log({f"grad_norm/{name}": grad_norm}, step=step)
+
+        # 2) All-reduce the *shared* classifier head’s gradient
+        for name, param in model.named_parameters():
+            if "classifier" in name:
+                if param.grad is not None:
+                    dist.all_reduce(param.grad, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
+                    param.grad /= dist.get_world_size()
+
         scaler.step(optimizer)
         scaler.update()
     else:
         outputs = model(**inputs)
         loss = outputs.loss
         loss.backward()
+
+        # 1) Simulate lossy gradient communication for TP-sharded parameters
         for name, param in model.named_parameters():
             if param.grad is not None:
                 param.grad = network.receive(param.grad, network.send(param.grad))
@@ -737,6 +747,14 @@ def train_step(model: nn.Module,
                 log_f.write(f"Step {step} | FP32 | Grad Norm [{name}]: {grad_norm:.6f}\n")
                 if dist.get_rank() == 0:
                     wandb.log({f"grad_norm/{name}": grad_norm}, step=step)
+
+        # 2) All-reduce the *shared* classifier head’s gradient
+        for name, param in model.named_parameters():
+            if "classifier" in name:
+                if param.grad is not None:
+                    dist.all_reduce(param.grad, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
+                    param.grad /= dist.get_world_size()
+
         optimizer.step()
 
     optimizer.zero_grad()
@@ -751,7 +769,7 @@ def evaluate(model: nn.Module, eval_loader: DataLoader, device: torch.device):
     """
     model.eval()
     local_correct = torch.tensor(0, device=device, dtype=torch.long)
-    local_total   = torch.tensor(0, device=device, dtype=torch.long)
+    local_total = torch.tensor(0, device=device, dtype=torch.long)
 
     with torch.no_grad():
         for batch in eval_loader:
@@ -765,7 +783,7 @@ def evaluate(model: nn.Module, eval_loader: DataLoader, device: torch.device):
 
     # All-reduce sums across all ranks
     dist.all_reduce(local_correct, op=dist.ReduceOp.SUM)
-    dist.all_reduce(local_total,   op=dist.ReduceOp.SUM)
+    dist.all_reduce(local_total, op=dist.ReduceOp.SUM)
     return (local_correct.float() / local_total.float()).item()
 
 
@@ -776,7 +794,9 @@ def train_to_accuracy(args):
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
     dist.init_process_group(backend="nccl", init_method="env://")
-    world_size = args.tensor_parallel_size
+    world_size = dist.get_world_size()
+    assert world_size == args.tensor_parallel_size, \
+        f"Launched processes ({world_size}) != requested tensor_parallel_size ({args.tensor_parallel_size})"
     group = dist.group.WORLD
 
     # -------------------------------------------
@@ -805,7 +825,6 @@ def train_to_accuracy(args):
             name=(args.run_name if hasattr(args, "run_name") else None)
         )
 
-    # Build our TP LlamaForSequenceClassification
     model = TPLlamaForSequenceClassification(
         model_name=args.model_name,
         num_labels=num_labels,
@@ -814,7 +833,7 @@ def train_to_accuracy(args):
         local_rank=local_rank
     ).to(torch.device(f"cuda:{local_rank}"))
 
-    # Make sure all ranks wait until model is built & weights copied
+    # Ensure all ranks wait until model is built
     dist.barrier()
 
     # -------------------------------------------
@@ -826,14 +845,19 @@ def train_to_accuracy(args):
     )
     if tokenizer.pad_token is None:
         tokenizer.add_special_tokens({"pad_token": "<pad>"})
-        model.tp_backbone.embed_tokens = nn.Embedding(len(tokenizer), model.config.hidden_size).to(local_rank)
+        # Rebuild embedding to match new vocab size
+        new_emb = nn.Embedding(len(tokenizer), model.config.hidden_size).to(local_rank)
+        # Copy old weights for existing tokens
+        old_emb = model.tp_backbone.embed_tokens.weight.data
+        new_emb.weight.data[:old_emb.size(0), :] = old_emb
+        model.tp_backbone.embed_tokens = new_emb
 
     tokenizer.model_max_length = args.max_length
     model.tp_backbone.embed_tokens.padding_idx = tokenizer.pad_token_id
 
     train_ds, eval_ds = get_dataset(args, tokenizer)
     train_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
-    eval_ds.set_format(type="torch",  columns=["input_ids", "attention_mask", "labels"])
+    eval_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
     train_sampler = DistributedSampler(
         train_ds,
@@ -867,10 +891,11 @@ def train_to_accuracy(args):
     use_fp16 = getattr(args, "fp16", False)
     scaler = GradScaler() if use_fp16 else None
 
-    # Only optimize parameters that require gradients
-    optimizer = optim.AdamW(model.parameters(),
-                            lr=args.learning_rate,
-                            weight_decay=getattr(args, "weight_decay", 0.0))
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        weight_decay=getattr(args, "weight_decay", 0.0)
+    )
 
     # -------------------------------------------
     # 6) Initialize LossyNetwork

@@ -47,12 +47,13 @@
 #         self.vocab_size = new_num_tokens
 
 
+# tp_llama_sequence_classification.py
 
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from transformers import LlamaConfig, LlamaForSequenceClassification
 from transformers.modeling_outputs import SequenceClassifierOutput
-import torch.distributed as dist
 
 from tp_Llama_modules import TensorParallelLlamaModel
 
@@ -63,7 +64,6 @@ class TPLlamaForSequenceClassification(nn.Module):
     We load a pretrained LlamaForSequenceClassification, extract its base LlamaModel
     and classification head, then build a TP backbone + a shared, single-rank classifier head.
     """
-
     def __init__(self,
                  model_name: str,
                  num_labels: int,
@@ -83,7 +83,6 @@ class TPLlamaForSequenceClassification(nn.Module):
         self.config = self.hf_model.config
 
         # 2) Extract the base LlamaModel (without the classification head)
-        # pretrained_base = self.hf_model.llama  # LlamaModel
         pretrained_base = self.hf_model.model  # LlamaModel
 
         # 3) Build our TP backbone
@@ -97,19 +96,13 @@ class TPLlamaForSequenceClassification(nn.Module):
         # 4) Build a shared classification head: linear(H → num_labels)
         #    We do NOT shard this head; we keep a full copy on each rank, but we will sync gradients.
         self.classifier = nn.Linear(self.config.hidden_size, num_labels, bias=True)
-        # Copy weights & bias from HF model
         with torch.no_grad():
             self.classifier.weight.data.copy_(
-                # self.hf_model.classifier.weight.data.clone()
-                 self.hf_model.score.weight.data.clone()
+                self.hf_model.score.weight.data.clone()
             )
             self.classifier.bias.data.copy_(
-                # self.hf_model.classifier.bias.data.clone()
                 self.hf_model.score.bias.data.clone()
             )
-
-        # 5) If local_rank ≠ 0, we still keep a local copy of the classifier (for gradient sync).
-        #    We'll manually all-reduce classifier grads in train_step.
 
     def forward(self,
                 input_ids: torch.Tensor = None,
@@ -122,8 +115,6 @@ class TPLlamaForSequenceClassification(nn.Module):
         attention_mask: [batch, seq]
         labels: [batch]
         position_ids: [batch, seq] (for rotary)
-
-        Returns: SequenceClassifierOutput(loss=?, logits=[batch, num_labels], ...)
         """
         # 1) Pass tokens through TP backbone → hidden_states: [batch, seq, H]
         outputs = self.tp_backbone(
@@ -169,5 +160,4 @@ class TPLlamaForSequenceClassification(nn.Module):
         new_embedding.weight.data[:min(old_num, new_num_tokens), :] = old_embeddings.weight.data[:min(old_num, new_num_tokens), :]
         self.tp_backbone.embed_tokens = new_embedding
 
-        # If one wants to tie classifier to embeddings, handle that here.
-
+        # If you want to tie classifier to embeddings, handle that here.
