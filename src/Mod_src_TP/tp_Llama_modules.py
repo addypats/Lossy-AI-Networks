@@ -753,20 +753,37 @@ class TensorParallelLlamaDecoderLayer(nn.Module):
         o_b = hf_decoder_layer.self_attn.o_proj.bias.data if hf_decoder_layer.self_attn.o_proj.bias is not None else None
 
         # 3) MLP up/down:
-        up_w   = hf_decoder_layer.mlp.gate_proj.weight.data          # [H, 4H]
-        up_b   = hf_decoder_layer.mlp.gate_proj.bias.data            # [4H]  (SiLU gate bias)
+        # up_w   = hf_decoder_layer.mlp.gate_proj.weight.data          # [H, 4H]
+        # up_b   = hf_decoder_layer.mlp.gate_proj.bias.data            # [4H]  (SiLU gate bias)
+        up_w = hf_decoder_layer.mlp.gate_proj.weight.data             # [H, 4H]
+        if hf_decoder_layer.mlp.gate_proj.bias is not None:
+            up_b = hf_decoder_layer.mlp.gate_proj.bias.data          # [4H]
+        else:
+            up_b = None
+        
         # Note: HF uses gate_proj and up_proj separately: 
         #   gate_proj: [H, 4H], up_proj: [H, 4H], then they do `si lu(gate) * up`
         #   So “fused upweight” for activation is slightly different. 
         #   We replicate their logic: split “gate_proj” and “up_proj” separately in TP.
 
-        up2_w  = hf_decoder_layer.mlp.up_proj.weight.data            # [H, 4H]
-        up2_b  = hf_decoder_layer.mlp.up_proj.bias.data              # [4H]
+        # up2_w  = hf_decoder_layer.mlp.up_proj.weight.data            # [H, 4H]
+        # up2_b  = hf_decoder_layer.mlp.up_proj.bias.data              # [4H]
+        up2_w = hf_decoder_layer.mlp.up_proj.weight.data              # [H, 4H]
+        if hf_decoder_layer.mlp.up_proj.bias is not None:
+            up2_b = hf_decoder_layer.mlp.up_proj.bias.data            # [4H]
+        else:
+            up2_b = None
+        
         # But in TP we want to treat gate_proj and up_proj as two separate row-parallel layers.
         # We will slice them individually. That is fine.
 
-        down_w = hf_decoder_layer.mlp.down_proj.weight.data         # [4H, H]
-        down_b = hf_decoder_layer.mlp.down_proj.bias.data           # [H]
+        # down_w = hf_decoder_layer.mlp.down_proj.weight.data         # [4H, H]
+        # down_b = hf_decoder_layer.mlp.down_proj.bias.data           # [H]
+        down_w = hf_decoder_layer.mlp.down_proj.weight.data          # [4H, H]
+        if hf_decoder_layer.mlp.down_proj.bias is not None:
+            down_b = hf_decoder_layer.mlp.down_proj.bias.data        # [H]
+        else:
+            down_b = None
 
         # Build submodules:
 
