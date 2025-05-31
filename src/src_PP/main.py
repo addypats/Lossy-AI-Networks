@@ -64,13 +64,25 @@ class Stage0(nn.Module):
         attention_mask: LongTensor [batch, seq_len] on cuda:0
         """
         # (1) Embed tokens → [batch, seq_len, hidden_dim]
-        h = self.embed(input_ids)
+        h = self.embed(input_ids)  # -> (batch, seq_len, hidden_dim)
 
-        # (2) Pass through each transformer block
+        # (2) Build position IDs: 0..(seq_len-1) for every batch
+        batch_size, seq_len = input_ids.size()
+        position_ids = (
+            torch.arange(seq_len, device=self.device)
+            .unsqueeze(0)
+            .expand(batch_size, seq_len)
+        )  # [batch, seq_len] long
+
+        # (3) Pass through each transformer block, supplying position_ids
         for block in self.layers:
-            h = block(h, attention_mask=attention_mask)[0]
+            h = block(
+                h,
+                attention_mask=attention_mask,
+                position_ids=position_ids
+            )[0]
 
-        # (3) Return hidden states + attention mask for the next stage
+        # (4) Return hidden states + attention mask for the next stage
         return h, attention_mask
 
 
@@ -95,9 +107,24 @@ class StageMiddle(nn.Module):
         hidden_states:  FloatTensor [batch, seq_len, hidden_dim] on cuda:k
         attention_mask: LongTensor [batch, seq_len] on cuda:k
         """
-        h = hidden_states
+        h = hidden_states  # [batch, seq_len, hidden_dim]
+        batch_size, seq_len, _ = h.size()
+
+        # (1) Build position IDs
+        position_ids = (
+            torch.arange(seq_len, device=self.device)
+            .unsqueeze(0)
+            .expand(batch_size, seq_len)
+        )  # [batch, seq_len] long
+
+        # (2) Pass through each transformer block, supplying position_ids
         for block in self.layers:
-            h = block(h, attention_mask=attention_mask)[0]
+            h = block(
+                h,
+                attention_mask=attention_mask,
+                position_ids=position_ids
+            )[0]
+
         return h, attention_mask
 
 
@@ -106,7 +133,7 @@ class StageMiddle(nn.Module):
 # ============================================
 class StageLast(nn.Module):
     """
-    Stage N-1: the last stage.  Holds a contiguous slice of transformer blocks,
+    Stage N-1: holds a contiguous slice of transformer blocks,
     plus final LayerNorm and classification head.
     Expects input: (hidden_states: FloatTensor, attention_mask: LongTensor) on cuda:N-1
     If labels are given, returns scalar loss; otherwise returns logits.
@@ -126,13 +153,28 @@ class StageLast(nn.Module):
         attention_mask: LongTensor [batch, seq_len] on cuda:N-1
         labels:         LongTensor [batch] on cuda:N-1 (optional)
         """
-        h = hidden_states
-        for block in self.layers:
-            h = block(h, attention_mask=attention_mask)[0]
+        h = hidden_states  # [batch, seq_len, hidden_dim]
+        batch_size, seq_len, _ = h.size()
 
-        h = self.final_norm(h)              # [batch, seq_len, hidden_dim]
-        cls_token = h[:, 0, :]              # [batch, hidden_dim]
-        logits = self.classifier(cls_token) # [batch, num_labels]
+        # (1) Build position IDs
+        position_ids = (
+            torch.arange(seq_len, device=self.device)
+            .unsqueeze(0)
+            .expand(batch_size, seq_len)
+        )  # [batch, seq_len] long
+
+        # (2) Pass through each transformer block, supplying position_ids
+        for block in self.layers:
+            h = block(
+                h,
+                attention_mask=attention_mask,
+                position_ids=position_ids
+            )[0]
+
+        # (3) Final norm + classification head
+        h_norm = self.final_norm(h)                 # [batch, seq_len, hidden_dim]
+        cls_token = h_norm[:, 0, :]                 # [batch, hidden_dim]
+        logits = self.classifier(cls_token)         # [batch, num_labels]
 
         if labels is not None:
             loss_fct = nn.CrossEntropyLoss()
@@ -196,8 +238,8 @@ def main():
         num_labels=dataset_config["num_labels"],
         num_unfrozen_layers=args.num_unfrozen_layers
     )
-    # `model_cls` is an AutoModelForSequenceClassification (e.g. LlamaForSequenceClassification),
-    # with the first (TOTAL_LAYERS - nunf) blocks frozen if nunf is not None.
+    # `model_cls` is AutoModelForSequenceClassification (e.g. LlamaForSequenceClassification),
+    # possibly with early layers frozen if `nunf` is specified.
 
     # ──────────────────────────────────────────────────────────
     # 3.5 Load train & eval datasets
@@ -241,7 +283,7 @@ def main():
     LAYERS_PER_STAGE = TOTAL_LAYERS // NUM_GPUS
 
     GLOBAL_BATCH_SIZE = args.batch_size
-    MICRO_BATCHES = NUM_GPUS  # Typically, one micro-batch per GPU
+    MICRO_BATCHES = NUM_GPUS   # Often one micro-batch per GPU
     assert GLOBAL_BATCH_SIZE % MICRO_BATCHES == 0, "Global batch size must be divisible by num_nodes"
     MICRO_BATCH_SIZE = GLOBAL_BATCH_SIZE // MICRO_BATCHES
 
@@ -261,13 +303,13 @@ def main():
     # 3.9 Handle Single‐GPU (NUM_GPUS == 1)
     # ──────────────────────────────────────────────────────────
     if NUM_GPUS == 1:
-        # We can train `model_cls` directly on one GPU without pipelining.
+        # Standard single‐GPU fine‐tuning with model_cls
         device = torch.device("cuda:0")
         model_cls.to(device)
         optimizer = optim.AdamW(model_cls.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
         scaler = GradScaler() if args.fp16 else None
 
-        # DataLoader setup (same collate)
+        # DataLoader (shared collate_fn)
         def collate_fn(batch):
             input_ids = torch.tensor([ex["input_ids"] for ex in batch], dtype=torch.long)
             attention_mask = torch.tensor([ex["attention_mask"] for ex in batch], dtype=torch.long)
@@ -459,15 +501,12 @@ def main():
                     x0 = input_chunks[i].to(DEVICE_LIST[0])    # [batch, seq_len] LongTensor
                     m0 = mask_chunks[i].to(DEVICE_LIST[0])     # [batch, seq_len] LongTensor
 
-                    # We only pass labels to a single‐GPU model, not to Stage0
                     if args.fp16:
                         with autocast():
-                            out0 = stages[0](x0, m0)
+                            h0, a0 = stages[0](x0, m0)
                     else:
-                        out0 = stages[0](x0, m0)
+                        h0, a0 = stages[0](x0, m0)
 
-                    # out0 is (hidden_states, attention_mask)
-                    h0, a0 = out0
                     buf_h[0][i] = h0.detach()
                     buf_m[0][i] = a0.detach()
 
@@ -516,7 +555,7 @@ def main():
                         scaler.scale(buf_loss[i]).backward(retain_graph=True)
                     else:
                         buf_loss[i].backward(retain_graph=True)
-                    # Capture gradient wrt h_last_in on cuda:(N-1):
+                    # Capture gradient wrt h_last_in on cuda:(N-1)
                     g_last = h_last_in.grad
                     gz = zero_some_fraction(g_last, LOSSY_FRACTION)
                     grad_buf[last_stage - 1][i] = gz.to(DEVICE_LIST[last_stage - 1])
