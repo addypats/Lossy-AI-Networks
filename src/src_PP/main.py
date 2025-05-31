@@ -667,6 +667,7 @@ from comms import LossyNetwork
 from data import get_dataset
 from models import get_classifier_and_tokenizer
 from trainer import MyClassifierCallback, compute_classfication_metrics
+from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding
 
 import wandb
 import torch.nn as nn
