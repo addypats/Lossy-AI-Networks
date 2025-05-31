@@ -611,77 +611,105 @@ class TensorParallelLlamaDecoderLayer(nn.Module):
         # else:
           #   fused_qkv_b = None
 
-        # First, figure out how Q, K, V are stored in this particular HF layer.
-        # We want a single [H, 3H] tensor (fused_qkv_w). There are two common cases:
-        #
-        #   (A) A fused "qkv_proj" exists: hf_decoder_layer.self_attn.qkv_proj.weight → [H, 3H]
-        #   (B) Three individual projections exist, each [H, H].
-        #
-        # If we find neither pattern, we will print out the actual shapes and then error.
+        # 1) Build fused QKV weight & bias in one of three possible layouts:
+        #    (a) a single `qkv_proj` of shape [H, 3H]
+        #    (b) three independent [H, H] q_proj/k_proj/v_proj
+        #    (c) grouped K/V: q_proj is [H, H], but k_proj/v_proj are [H, Dk] with Dk < H,
+        #        so we tile K/V to full [H, H].
 
         H = llama_config.hidden_size
 
-        # CASE A: look for a fused qkv_proj
+        # Case (a): fused qkv_proj exists
         if hasattr(hf_decoder_layer.self_attn, "qkv_proj"):
             raw_qkv = hf_decoder_layer.self_attn.qkv_proj.weight.data
             if raw_qkv.shape == (H, 3 * H):
                 fused_qkv_w = raw_qkv.clone()
-                if hf_decoder_layer.self_attn.qkv_proj.bias is not None and \
-                   hf_decoder_layer.self_attn.qkv_proj.bias.data.shape == (3 * H,):
+                if (hf_decoder_layer.self_attn.qkv_proj.bias is not None
+                    and hf_decoder_layer.self_attn.qkv_proj.bias.data.shape[0] == 3 * H):
                     fused_qkv_b = hf_decoder_layer.self_attn.qkv_proj.bias.data.clone()
                 else:
                     fused_qkv_b = None
             else:
                 raise RuntimeError(
-                    f"Found qkv_proj but its weight is {raw_qkv.shape}, not ({H}, {3*H})."
+                    f"Found fused qkv_proj, but its weight is {raw_qkv.shape}, expected ({H}, {3*H})"
                 )
 
-        # CASE B: three separate q_proj / k_proj / v_proj
+        # Case (b) or (c): separate q_proj/k_proj/v_proj exist
         elif hasattr(hf_decoder_layer.self_attn, "q_proj") \
-             and hasattr(hf_decoder_layer.self_attn, "k_proj") \
-             and hasattr(hf_decoder_layer.self_attn, "v_proj"):
+            and hasattr(hf_decoder_layer.self_attn, "k_proj") \
+            and hasattr(hf_decoder_layer.self_attn, "v_proj"):
 
-            q_w = hf_decoder_layer.self_attn.q_proj.weight.data
-            k_w = hf_decoder_layer.self_attn.k_proj.weight.data
-            v_w = hf_decoder_layer.self_attn.v_proj.weight.data
+            q_w = hf_decoder_layer.self_attn.q_proj.weight.data   # shape [H, ?]
+            k_w = hf_decoder_layer.self_attn.k_proj.weight.data   # shape [H, Dk]
+            v_w = hf_decoder_layer.self_attn.v_proj.weight.data   # shape [H, Dv]
 
-            # If they truly are all [H, H], we can concatenate.
+            # 1. If all three are exactly [H, H], just concat them:
             if q_w.shape == (H, H) and k_w.shape == (H, H) and v_w.shape == (H, H):
                 fused_qkv_w = torch.cat([q_w, k_w, v_w], dim=1)  # [H, 3H]
             else:
-                # Print shapes so you can see exactly what you got:
-                print(
-                    f" — In TensorParallelLlamaDecoderLayer, encountered separate Q/K/V shapes: "
-                    f"q_proj: {q_w.shape}, k_proj: {k_w.shape}, v_proj: {v_w.shape}"
-                )
-                raise RuntimeError(
-                    "Cannot build fused QKV: expected three [H,H] matrices, "
-                    f"got q_proj {q_w.shape}, k_proj {k_w.shape}, v_proj {v_w.shape}."
-                )
+                # Possibly grouped K/V: q is [H, H], but k/v are [H, Dk], Dk < H.
+                # In that case, Dk must divide H exactly, and we tile k/v along dim=1.
+                if q_w.shape != (H, H):
+                    raise RuntimeError(
+                        f"Unexpected q_proj shape {q_w.shape}, expected either (H,H) or (H,3H)."
+                    )
 
-            # Now handle biases if all three exist and are [H]:
-            if (hf_decoder_layer.self_attn.q_proj.bias is not None
-                and hf_decoder_layer.self_attn.k_proj.bias is not None
-                and hf_decoder_layer.self_attn.v_proj.bias is not None):
+                # Verify k_w and v_w have shape [H, Dk] where Dk divides H
+                Dk = k_w.shape[1]
+                Dv = v_w.shape[1]
+                if k_w.shape[0] != H or v_w.shape[0] != H:
+                    raise RuntimeError(
+                        f"k_proj or v_proj has incorrect batch dim: k_proj {k_w.shape}, v_proj {v_w.shape}"
+                    )
 
-                q_b = hf_decoder_layer.self_attn.q_proj.bias.data       # [H]
-                k_b = hf_decoder_layer.self_attn.k_proj.bias.data       # [H]
-                v_b = hf_decoder_layer.self_attn.v_proj.bias.data       # [H]
+                # Check that Dk and Dv both divide H exactly
+                if (H % Dk != 0) or (H % Dv != 0):
+                    raise RuntimeError(
+                        f"Grouped K/V shapes must divide H. Found H={H}, Dk={Dk}, Dv={Dv}."
+                    )
+
+                # Tile K and V so that after tiling their width becomes H
+                reps_k = H // Dk
+                reps_v = H // Dv
+                k_w_full = k_w.repeat_interleave(reps_k, dim=1)  # [H, H]
+                v_w_full = v_w.repeat_interleave(reps_v, dim=1)  # [H, H]
+
+                # Now cat Q [H,H], K_full [H,H], V_full [H,H]
+                fused_qkv_w = torch.cat([q_w, k_w_full, v_w_full], dim=1)  # [H, 3H]
+
+            # Handle biases if present and tile similarly
+            q_b = hf_decoder_layer.self_attn.q_proj.bias.data if hf_decoder_layer.self_attn.q_proj.bias is not None else None
+            k_b = hf_decoder_layer.self_attn.k_proj.bias.data if hf_decoder_layer.self_attn.k_proj.bias is not None else None
+            v_b = hf_decoder_layer.self_attn.v_proj.bias.data if hf_decoder_layer.self_attn.v_proj.bias is not None else None
+
+            if q_b is not None and k_b is not None and v_b is not None:
                 if q_b.shape == (H,) and k_b.shape == (H,) and v_b.shape == (H,):
-                    fused_qkv_b = torch.cat([q_b, k_b, v_b], dim=0)     # [3H]
+                    fused_qkv_b = torch.cat([q_b, k_b, v_b], dim=0)  # [3H]
                 else:
-                    # If any bias has the “wrong” shape, drop biases entirely:
-                    fused_qkv_b = None
+                    # Grouped biases: tile them too
+                    if k_b.shape == (Dk,) and (H % Dk == 0):
+                        fused_k_b = k_b.repeat_interleave(H // Dk)
+                    else:
+                        fused_k_b = None
+                    if v_b.shape == (Dv,) and (H % Dv == 0):
+                        fused_v_b = v_b.repeat_interleave(H // Dv)
+                    else:
+                        fused_v_b = None
+
+                    if fused_k_b is not None and fused_v_b is not None and q_b.shape == (H,):
+                        fused_qkv_b = torch.cat([q_b, fused_k_b, fused_v_b], dim=0)
+                    else:
+                        fused_qkv_b = None
             else:
                 fused_qkv_b = None
 
         else:
-            # Neither fused-qkv nor three [H,H] projections exist. Show shapes and error.
+            # No valid QKV found
             all_names = [name for name, _ in hf_decoder_layer.self_attn.named_parameters()]
-            print(f" — In TensorParallelLlamaDecoderLayer, self_attn parameters = {all_names}")
             raise RuntimeError(
                 "Cannot find a valid QKV in this LlamaAttention. "
-                "Expected either a single qkv_proj [H×3H] or three q_proj/k_proj/v_proj [H×H]."
+                "self_attn parameters = "
+                + ", ".join(all_names)
             )  
 
         # 2) O projection weight & bias:
