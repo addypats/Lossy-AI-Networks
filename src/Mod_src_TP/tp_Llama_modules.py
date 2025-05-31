@@ -266,7 +266,11 @@ class ColumnParallelLinear(nn.Module):
 #    We also include attention_mask, rotary embeddings placeholder, residual + LayerNorm + dropout.
 # --------------------------------------------------------------------------------
 
-class TensorParallelLlamaAttention(nn.Module):
+
+from transformers.models.llama.modeling_llama import LlamaAttention, LlamaConfig, LlamaRMSNorm
+
+# class TensorParallelLlamaAttention(nn.Module):
+class TensorParallelLlamaAttention(LlamaAttention):
     def __init__(self,
                  llama_config: LlamaConfig,
                  layer_idx: int,
@@ -574,11 +578,8 @@ class TensorParallelLlamaMLP(nn.Module):
 # --------------------------------------------------------------------------------
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer as _HF_LlamaDecoderLayer
-from transformers.models.llama.modeling_llama import LlamaAttention, LlamaConfig, LlamaRMSNorm
 
-
-#class TensorParallelLlamaDecoderLayer(nn.Module):
-class TensorParallelLlamaAttention(LlamaAttention):
+class TensorParallelLlamaDecoderLayer(nn.Module):
     def __init__(self,
                  llama_config: LlamaConfig,
                  layer_idx: int,
