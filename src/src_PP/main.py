@@ -33,96 +33,112 @@ def zero_some_fraction(tensor: torch.Tensor, percent: float) -> torch.Tensor:
 
 
 # ============================================
-# 2) Define a Dynamic PipelineStage for Classification
+# 2.A) Stage0: Embedding + transformer blocks
 # ============================================
-class PipelineStage(nn.Module):
+class Stage0(nn.Module):
     """
-    A pipeline stage that holds either:
-      - The embedding + some number of transformer blocks, or
-      - A middle slice of transformer blocks, or
-      - The last transformer blocks + final classification head.
-
-    On Stage 0: forward(...) will receive (input_ids: LongTensor, attention_mask: LongTensor).
-    On all other stages: forward(...) will receive (hidden_states: FloatTensor, attention_mask: LongTensor).
+    Stage 0: holds the embedding layer + a contiguous slice of transformer blocks.
+    Expects input: (input_ids: LongTensor, attention_mask: LongTensor) on cuda:0
+    Returns: (hidden_states: FloatTensor, attention_mask: LongTensor) on cuda:0
     """
-    def __init__(self, full_model, layer_start: int, layer_end: int,
-                 is_last_stage: bool, device: str):
+    def __init__(self, full_model, layer_start: int, layer_end: int, device: str):
         """
-        full_model:      an AutoModelForSequenceClassification loaded on CPU
-        layer_start:     inclusive index in full_model.model.layers
-        layer_end:       exclusive index
-        is_last_stage:   if True, also include final norm + classification head
-        device:          string like "cuda:0", "cuda:1", ...
+        full_model:  AutoModelForSequenceClassification loaded on CPU
+        layer_start/layer_end: indices into full_model.model.layers
+        device:      e.g. "cuda:0"
         """
         super().__init__()
         self.device = torch.device(device)
 
-        # (1) If this is the first stage, take the embedding layer
-        if layer_start == 0:
-            self.embed = full_model.model.embed_tokens.to(self.device)
-        else:
-            self.embed = None
+        # Embedding from the base model
+        self.embed = full_model.model.embed_tokens.to(self.device)
 
-        # (2) Take the transformer blocks for [layer_start:layer_end]
+        # A slice of transformer blocks [layer_start:layer_end]
         self.layers = nn.ModuleList(
             [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
         )
 
-        # (3) If this is the last stage, also attach final LayerNorm + classification head
-        self.is_last = is_last_stage
-        if is_last_stage:
-            self.final_norm = full_model.model.norm.to(self.device)
-            self.classifier = full_model.score.to(self.device)
-        else:
-            self.final_norm = None
-            self.classifier = None
-
-    def forward(self, hidden_or_input: torch.Tensor, attention_mask: torch.Tensor, labels=None):
+    def forward(self, input_ids: torch.LongTensor, attention_mask: torch.LongTensor):
         """
-        If this is Stage 0:
-          - hidden_or_input : LongTensor of token IDs (shape [batch, seq_len]) on self.device
-          - attention_mask  : LongTensor of same shape (for masking)
-          - labels may be None or a LongTensor (for classification loss)
-          In that case, we must do:
-            hidden_states = self.embed(token_ids)
-            then feed hidden_states, attention_mask through transformer blocks.
-
-        If this is Stage k > 0:
-          - hidden_or_input : FloatTensor (shape [batch, seq_len, hidden_dim]) on self.device
-          - attention_mask  : LongTensor of shape [batch, seq_len]
-          - labels only passed if this is the last stage.
-          Then we feed hidden_states directly through transformer blocks.
+        input_ids:      LongTensor [batch, seq_len] on cuda:0
+        attention_mask: LongTensor [batch, seq_len] on cuda:0
         """
-        # Determine if we’re in Stage 0 by checking if self.embed is not None AND
-        # the incoming tensor is of integer dtype (LongTensor).
-        if self.embed is not None and hidden_or_input.dtype in (torch.int32, torch.int64):
-            # Stage 0 path: hidden_or_input is actually input_ids
-            input_ids = hidden_or_input
-            mask = attention_mask
-            # 1. Embed tokens
-            h = self.embed(input_ids)  # [batch, seq_len, hidden_dim]
-            m = mask
-        else:
-            # Intermediate or final stage: hidden_or_input is already hidden states
-            h = hidden_or_input
-            m = attention_mask
+        # (1) Embed tokens → [batch, seq_len, hidden_dim]
+        h = self.embed(input_ids)
 
-        # 2. Pass through transformer blocks
+        # (2) Pass through each transformer block
         for block in self.layers:
-            h = block(h, attention_mask=m)[0]  # block returns (hidden_states, _)
+            h = block(h, attention_mask=attention_mask)[0]
 
-        # 3. If this is the final stage, apply final norm + classification head
-        if self.is_last:
-            h_norm = self.final_norm(h)         # [batch, seq_len, hidden_dim]
-            cls_token = h_norm[:, 0, :]         # [batch, hidden_dim]
-            logits = self.classifier(cls_token) # [batch, num_labels]
-            if labels is not None:
-                loss_fct = nn.CrossEntropyLoss()
-                return loss_fct(logits, labels)
-            return logits
+        # (3) Return hidden states + attention mask for the next stage
+        return h, attention_mask
 
-        # 4. Otherwise, return intermediate hidden states + mask
-        return h, m
+
+# ============================================
+# 2.B) StageMiddle: Intermediate transformer blocks
+# ============================================
+class StageMiddle(nn.Module):
+    """
+    Stage k where 1 ≤ k ≤ N-2.  Holds a contiguous slice of transformer blocks.
+    Expects input: (hidden_states: FloatTensor, attention_mask: LongTensor) on cuda:k
+    Returns: (hidden_states: FloatTensor, attention_mask: LongTensor) on cuda:k
+    """
+    def __init__(self, full_model, layer_start: int, layer_end: int, device: str):
+        super().__init__()
+        self.device = torch.device(device)
+        self.layers = nn.ModuleList(
+            [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
+        )
+
+    def forward(self, hidden_states: torch.FloatTensor, attention_mask: torch.LongTensor):
+        """
+        hidden_states:  FloatTensor [batch, seq_len, hidden_dim] on cuda:k
+        attention_mask: LongTensor [batch, seq_len] on cuda:k
+        """
+        h = hidden_states
+        for block in self.layers:
+            h = block(h, attention_mask=attention_mask)[0]
+        return h, attention_mask
+
+
+# ============================================
+# 2.C) StageLast: Final transformer blocks + norm + classification head
+# ============================================
+class StageLast(nn.Module):
+    """
+    Stage N-1: the last stage.  Holds a contiguous slice of transformer blocks,
+    plus final LayerNorm and classification head.
+    Expects input: (hidden_states: FloatTensor, attention_mask: LongTensor) on cuda:N-1
+    If labels are given, returns scalar loss; otherwise returns logits.
+    """
+    def __init__(self, full_model, layer_start: int, layer_end: int, device: str):
+        super().__init__()
+        self.device = torch.device(device)
+        self.layers = nn.ModuleList(
+            [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
+        )
+        self.final_norm = full_model.model.norm.to(self.device)
+        self.classifier = full_model.score.to(self.device)
+
+    def forward(self, hidden_states: torch.FloatTensor, attention_mask: torch.LongTensor, labels=None):
+        """
+        hidden_states:  FloatTensor [batch, seq_len, hidden_dim] on cuda:N-1
+        attention_mask: LongTensor [batch, seq_len] on cuda:N-1
+        labels:         LongTensor [batch] on cuda:N-1 (optional)
+        """
+        h = hidden_states
+        for block in self.layers:
+            h = block(h, attention_mask=attention_mask)[0]
+
+        h = self.final_norm(h)              # [batch, seq_len, hidden_dim]
+        cls_token = h[:, 0, :]              # [batch, hidden_dim]
+        logits = self.classifier(cls_token) # [batch, num_labels]
+
+        if labels is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            return loss_fct(logits, labels)
+
+        return logits
 
 
 # ============================================
@@ -180,8 +196,8 @@ def main():
         num_labels=dataset_config["num_labels"],
         num_unfrozen_layers=args.num_unfrozen_layers
     )
-    # Now `model_cls` is an AutoModelForSequenceClassification (e.g. LlamaForSequenceClassification),
-    # with the first (TOTAL_LAYERS - num_unfrozen_layers) blocks frozen if num_unfrozen_layers is not None.
+    # model_cls is AutoModelForSequenceClassification (Llama-based), with
+    # the first (TOTAL_LAYERS - nunf) blocks frozen if nunf is not None.
 
     # ──────────────────────────────────────────────────────────
     # 3.5 Load train & eval datasets (unchanged)
@@ -225,7 +241,7 @@ def main():
     LAYERS_PER_STAGE = TOTAL_LAYERS // NUM_GPUS
 
     GLOBAL_BATCH_SIZE = args.batch_size
-    MICRO_BATCHES = NUM_GPUS  # often we choose one micro-batch per GPU
+    MICRO_BATCHES = NUM_GPUS   # Typically, one micro-batch per GPU
     assert GLOBAL_BATCH_SIZE % MICRO_BATCHES == 0, "Global batch size must be divisible by num_nodes"
     MICRO_BATCH_SIZE = GLOBAL_BATCH_SIZE // MICRO_BATCHES
 
@@ -237,33 +253,47 @@ def main():
     MAX_SEQ_LEN = args.max_length
 
     DEVICE_LIST = [f"cuda:{i}" for i in range(NUM_GPUS)]
-    for d in DEVICE_LIST:
+    for dev in DEVICE_LIST:
         if not torch.cuda.is_available():
-            raise RuntimeError(f"{d} is not available")
+            raise RuntimeError(f"{dev} is not available")
 
     # ──────────────────────────────────────────────────────────
-    # 3.9 Instantiate Pipeline Stages from the classification model
+    # 3.9 Instantiate Each Pipeline Stage
     # ──────────────────────────────────────────────────────────
     stages = []
     for i in range(NUM_GPUS):
         start_idx = i * LAYERS_PER_STAGE
         end_idx = start_idx + LAYERS_PER_STAGE
         is_last = (i == NUM_GPUS - 1)
-        stage = PipelineStage(
-            full_model=model_cls,         # AutoModelForSequenceClassification on CPU
-            layer_start=start_idx,
-            layer_end=end_idx,
-            is_last_stage=is_last,
-            device=DEVICE_LIST[i]
-        )
+        if i == 0:
+            stage = Stage0(
+                full_model=model_cls,
+                layer_start=start_idx,
+                layer_end=end_idx,
+                device=DEVICE_LIST[i]
+            )
+        elif is_last:
+            stage = StageLast(
+                full_model=model_cls,
+                layer_start=start_idx,
+                layer_end=end_idx,
+                device=DEVICE_LIST[i]
+            )
+        else:
+            stage = StageMiddle(
+                full_model=model_cls,
+                layer_start=start_idx,
+                layer_end=end_idx,
+                device=DEVICE_LIST[i]
+            )
         stages.append(stage)
 
     # ──────────────────────────────────────────────────────────
-    # 3.10 Create an optimizer (one per stage)
+    # 3.10 Create One Optimizer per Stage
     # ──────────────────────────────────────────────────────────
     optimizers = []
-    for i, stage in enumerate(stages):
-        opt = optim.AdamW(stage.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
+    for st in stages:
+        opt = optim.AdamW(st.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
         optimizers.append(opt)
 
     # ──────────────────────────────────────────────────────────
@@ -294,12 +324,12 @@ def main():
     )
 
     # ──────────────────────────────────────────────────────────
-    # 3.12 Setup Mixed Precision if requested
+    # 3.12 Setup Mixed Precision if Requested
     # ──────────────────────────────────────────────────────────
     scaler = GradScaler() if args.fp16 else None
 
     # ──────────────────────────────────────────────────────────
-    # 3.13 Create Callback for TTAC reporting
+    # 3.13 Create TTAC Callback (unchanged)
     # ──────────────────────────────────────────────────────────
     callback_args = {
         "report_ttac": dataset_config["report_ttac"],
@@ -309,7 +339,7 @@ def main():
     callback = MyClassifierCallback(callback_args)
 
     # ──────────────────────────────────────────────────────────
-    # 3.14 Training Loop: “2*K – 1” Pipeline Schedule
+    # 3.14 Training Loop: 2*K – 1 Pipeline Schedule
     # ──────────────────────────────────────────────────────────
     global_step = 0
     for epoch in range(NUM_EPOCHS):
@@ -320,27 +350,27 @@ def main():
             mask_chunks = batch["attention_mask"].chunk(MICRO_BATCHES)
             label_chunks = batch["labels"].chunk(MICRO_BATCHES)
 
-            # Buffers to hold activations & masks at each stage
+            # Buffers for activations & masks at each stage
             buf_h = [[None] * MICRO_BATCHES for _ in range(NUM_GPUS)]
             buf_m = [[None] * MICRO_BATCHES for _ in range(NUM_GPUS)]
 
-            # Buffers to hold final losses and upstream gradients
+            # Buffers for final losses and upstream gradients
             buf_loss = [None] * MICRO_BATCHES
             grad_buf = [[None] * MICRO_BATCHES for _ in range(NUM_GPUS - 1)]
 
-            # Zero out all optimizers
+            # Zero all optimizers
             for opt in optimizers:
                 opt.zero_grad()
 
             total_steps = 2 * MICRO_BATCHES - 1
             for t in range(total_steps):
                 # ───────────────────────────────────────────────────
-                # (1) Forward through Stage 0: t < MICRO_BATCHES
+                # (1) Stage 0 Forward: t < MICRO_BATCHES
                 # ───────────────────────────────────────────────────
                 if t < MICRO_BATCHES:
                     i = t
-                    x0 = input_chunks[i].to(DEVICE_LIST[0])      # input_ids
-                    m0 = mask_chunks[i].to(DEVICE_LIST[0])       # attention_mask
+                    x0 = input_chunks[i].to(DEVICE_LIST[0])    # [batch, seq_len] LongTensor
+                    m0 = mask_chunks[i].to(DEVICE_LIST[0])     # [batch, seq_len] LongTensor
                     lbl0 = label_chunks[i].to(DEVICE_LIST[0]) if NUM_GPUS == 1 else None
 
                     if args.fp16:
@@ -350,7 +380,7 @@ def main():
                         out0 = stages[0](x0, m0, labels=lbl0)
 
                     if NUM_GPUS == 1:
-                        # Single‐stage classification model
+                        # Single‐stage classification: out0 is loss
                         buf_loss[i] = out0
                     else:
                         # out0 is (hidden_states, attention_mask) on cuda:0
@@ -359,8 +389,8 @@ def main():
                         buf_m[0][i] = a0.detach()
 
                 # ───────────────────────────────────────────────────
-                # (2) Forward through intermediate stages 1..(N-2)
-                #     Stage k consumes buf_h[k-1][i] when (k ≤ t < MICRO_BATCHES + k)
+                # (2) Stage k Forward for 1 ≤ k ≤ N-2:
+                #     Condition: k ≤ t < MICRO_BATCHES + k
                 # ───────────────────────────────────────────────────
                 for k in range(1, NUM_GPUS - 1):
                     if k <= t < (MICRO_BATCHES + k):
@@ -376,8 +406,8 @@ def main():
                         buf_m[k][i] = a_out.detach()
 
                 # ───────────────────────────────────────────────────
-                # (3) Forward + Loss through Final Stage (k = N-1):
-                #     occurs when (N-1 ≤ t < MICRO_BATCHES + N-1)
+                # (3) Stage N-1 (Last) Forward + Loss:
+                #     Condition: (N-1) ≤ t < MICRO_BATCHES + (N-1)
                 # ───────────────────────────────────────────────────
                 last_stage = NUM_GPUS - 1
                 if (NUM_GPUS - 1) <= t < (MICRO_BATCHES + NUM_GPUS - 1):
@@ -395,7 +425,7 @@ def main():
                         buf_loss[i] = loss_i
 
                 # ───────────────────────────────────────────────────
-                # (4) Backprop through Final Stage: t ≥ (MICRO_BATCHES + N-1)
+                # (4) Stage N-1 Backward: t ≥ (MICRO_BATCHES + (N-1))
                 # ───────────────────────────────────────────────────
                 if t >= (MICRO_BATCHES + NUM_GPUS - 1):
                     i = t - (MICRO_BATCHES + NUM_GPUS - 1)
@@ -403,14 +433,14 @@ def main():
                         scaler.scale(buf_loss[i]).backward(retain_graph=True)
                     else:
                         buf_loss[i].backward(retain_graph=True)
-                    # Capture gradient w.r.t. h_last_in on cuda:(N-1)
+                    # Capture gradient wrt h_last_in on cuda:(N-1):
                     g_last = h_last_in.grad
                     gz = zero_some_fraction(g_last, LOSSY_FRACTION)
                     grad_buf[last_stage - 1][i] = gz.to(DEVICE_LIST[last_stage - 1])
 
                 # ───────────────────────────────────────────────────
-                # (5) Backprop through intermediate stages (k = N-2 down to 1)
-                #     At t ≥ (MICRO_BATCHES + k), for each k
+                # (5) Backward through Stages N-2 down to 1:
+                #     For each k: if t ≥ (MICRO_BATCHES + k)
                 # ───────────────────────────────────────────────────
                 for k in range(NUM_GPUS - 2, 0, -1):
                     if t >= (MICRO_BATCHES + k):
@@ -423,14 +453,14 @@ def main():
                                 h_out_rec, _ = stages[k](h_in_rec, m_in_rec)
                         else:
                             h_out_rec, _ = stages[k](h_in_rec, m_in_rec)
-                        # Backward through stage k
+                        # Backprop through stage k
                         h_out_rec.backward(grad_buf[k][i], retain_graph=True)
                         gk = h_in_rec.grad
                         gkz = zero_some_fraction(gk, LOSSY_FRACTION)
                         grad_buf[k - 1][i] = gkz.to(DEVICE_LIST[k - 1])
 
                 # ───────────────────────────────────────────────────
-                # (6) Backprop through Stage 0: t ≥ MICRO_BATCHES
+                # (6) Backward through Stage 0: t ≥ MICRO_BATCHES
                 # ───────────────────────────────────────────────────
                 if t >= MICRO_BATCHES:
                     i = t - MICRO_BATCHES
@@ -439,7 +469,6 @@ def main():
                     if args.fp16:
                         with autocast():
                             if NUM_GPUS == 1:
-                                # Single-per-stage classification
                                 loss0_rec = stages[0](x0_rec, m0_rec, labels=label_chunks[i].to(DEVICE_LIST[0]))
                                 scaler.scale(loss0_rec).backward(retain_graph=True)
                             else:
@@ -454,7 +483,7 @@ def main():
                             h0_rec.backward(grad_buf[0][i], retain_graph=True)
 
             # ──────────────────────────────────────────────────────────
-            # (b) Optimizer Step: update each stage
+            # (b) Optimizer Step: update each stage’s parameters
             # ──────────────────────────────────────────────────────────
             if args.fp16:
                 for opt in optimizers:
@@ -468,7 +497,6 @@ def main():
             # (c) Logging & Checkpointing
             # ──────────────────────────────────────────────────────────
             global_step += 1
-
             micro_losses = [buf_loss[i].item() for i in range(MICRO_BATCHES)]
             avg_loss = sum(micro_losses) / MICRO_BATCHES
 
@@ -496,7 +524,9 @@ def main():
 
         # ───────────────────────────────────────────────────────
         # (Optional) Evaluation & Callback invocation here
-        # Use `compute_classfication_metrics` and `MyClassifierCallback` if desired
+        # You can run an evaluation loop over eval_loader, call
+        # compute_classfication_metrics, then invoke callback.on_evaluate(...)
+        # exactly as before.
         # ───────────────────────────────────────────────────────
 
     print("Training finished!")
