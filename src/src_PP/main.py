@@ -176,14 +176,14 @@ def main():
     random.seed(args.seed)
 
     # ──────────────────────────────────────────────────────────
-    # 3.2 Load dataset_config.yaml (unchanged)
+    # 3.2 Load dataset_config.yaml
     # ──────────────────────────────────────────────────────────
     with open("src/src_PP/dataset_config.yaml") as config_file:
         dataset_config_full = yaml.safe_load(config_file)
     dataset_config = dataset_config_full[args.dataset]
 
     # ──────────────────────────────────────────────────────────
-    # 3.3 Initialize LossyNetwork (unchanged)
+    # 3.3 Initialize LossyNetwork
     # ──────────────────────────────────────────────────────────
     network = LossyNetwork(args)
     network.set_seed(args.seed)
@@ -196,16 +196,16 @@ def main():
         num_labels=dataset_config["num_labels"],
         num_unfrozen_layers=args.num_unfrozen_layers
     )
-    # model_cls is AutoModelForSequenceClassification (Llama-based), with
-    # the first (TOTAL_LAYERS - nunf) blocks frozen if nunf is not None.
+    # `model_cls` is an AutoModelForSequenceClassification (e.g. LlamaForSequenceClassification),
+    # with the first (TOTAL_LAYERS - nunf) blocks frozen if nunf is not None.
 
     # ──────────────────────────────────────────────────────────
-    # 3.5 Load train & eval datasets (unchanged)
+    # 3.5 Load train & eval datasets
     # ──────────────────────────────────────────────────────────
     train_dataset, eval_dataset = get_dataset(args, tokenizer)
 
     # ──────────────────────────────────────────────────────────
-    # 3.6 Prepare output directory, save args.yaml (unchanged)
+    # 3.6 Prepare output directory, save args.yaml
     # ──────────────────────────────────────────────────────────
     OUTPUT_DIR_LOCAL = f"{args.output_dir}/{args.run_id}"
     os.makedirs(OUTPUT_DIR_LOCAL, exist_ok=True)
@@ -213,7 +213,7 @@ def main():
         yaml.dump(vars(args), f)
 
     # ──────────────────────────────────────────────────────────
-    # 3.7 Initialize WandB (unchanged)
+    # 3.7 Initialize WandB
     # ──────────────────────────────────────────────────────────
     wandb.init(
         project="your_project_name",
@@ -241,7 +241,7 @@ def main():
     LAYERS_PER_STAGE = TOTAL_LAYERS // NUM_GPUS
 
     GLOBAL_BATCH_SIZE = args.batch_size
-    MICRO_BATCHES = NUM_GPUS   # Typically, one micro-batch per GPU
+    MICRO_BATCHES = NUM_GPUS  # Typically, one micro-batch per GPU
     assert GLOBAL_BATCH_SIZE % MICRO_BATCHES == 0, "Global batch size must be divisible by num_nodes"
     MICRO_BATCH_SIZE = GLOBAL_BATCH_SIZE // MICRO_BATCHES
 
@@ -258,7 +258,94 @@ def main():
             raise RuntimeError(f"{dev} is not available")
 
     # ──────────────────────────────────────────────────────────
-    # 3.9 Instantiate Each Pipeline Stage
+    # 3.9 Handle Single‐GPU (NUM_GPUS == 1)
+    # ──────────────────────────────────────────────────────────
+    if NUM_GPUS == 1:
+        # We can train `model_cls` directly on one GPU without pipelining.
+        device = torch.device("cuda:0")
+        model_cls.to(device)
+        optimizer = optim.AdamW(model_cls.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
+        scaler = GradScaler() if args.fp16 else None
+
+        # DataLoader setup (same collate)
+        def collate_fn(batch):
+            input_ids = torch.tensor([ex["input_ids"] for ex in batch], dtype=torch.long)
+            attention_mask = torch.tensor([ex["attention_mask"] for ex in batch], dtype=torch.long)
+            labels = torch.tensor([ex["labels"] for ex in batch], dtype=torch.long)
+            return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=GLOBAL_BATCH_SIZE,
+            shuffle=True,
+            collate_fn=collate_fn,
+            num_workers=4,
+            pin_memory=True,
+        )
+
+        callback_args = {
+            "report_ttac": dataset_config["report_ttac"],
+            "report_file": f"{OUTPUT_DIR_LOCAL}/ttac_report.txt",
+            "target_acc": dataset_config["target_acc"],
+        }
+        callback = MyClassifierCallback(callback_args)
+
+        global_step = 0
+        for epoch in range(NUM_EPOCHS):
+            print(f"[Single‐GPU] Epoch {epoch+1}/{NUM_EPOCHS} starting...")
+            for batch in train_loader:
+                input_ids = batch["input_ids"].to(device)
+                attention_mask = batch["attention_mask"].to(device)
+                labels = batch["labels"].to(device)
+
+                optimizer.zero_grad()
+                if args.fp16:
+                    with autocast():
+                        outputs = model_cls(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            labels=labels
+                        )
+                        loss = outputs.loss
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    outputs = model_cls(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        labels=labels
+                    )
+                    loss = outputs.loss
+                    loss.backward()
+                    optimizer.step()
+
+                global_step += 1
+                if global_step % LOG_EVERY_N_STEPS == 0:
+                    wandb.log({
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "train_loss": loss.item()
+                    })
+
+                if global_step % SAVE_EVERY_N_STEPS == 0:
+                    ckpt = {
+                        "global_step": global_step,
+                        "epoch": epoch,
+                        "model_state": model_cls.state_dict(),
+                        "optimizer_state": optimizer.state_dict(),
+                    }
+                    ckpt_path = os.path.join(OUTPUT_DIR_LOCAL, f"checkpoint-step{global_step}.pt")
+                    torch.save(ckpt, ckpt_path)
+                    print(f"Saved checkpoint to {ckpt_path}")
+
+            print(f"[Single‐GPU] Epoch {epoch+1}/{NUM_EPOCHS} complete.")
+        print("Single‐GPU training finished!")
+        wandb.finish()
+        return
+
+    # ──────────────────────────────────────────────────────────
+    # 3.10 Instantiate Each Pipeline Stage (NUM_GPUS ≥ 2)
     # ──────────────────────────────────────────────────────────
     stages = []
     for i in range(NUM_GPUS):
@@ -289,7 +376,7 @@ def main():
         stages.append(stage)
 
     # ──────────────────────────────────────────────────────────
-    # 3.10 Create One Optimizer per Stage
+    # 3.11 Create One Optimizer per Stage
     # ──────────────────────────────────────────────────────────
     optimizers = []
     for st in stages:
@@ -297,7 +384,7 @@ def main():
         optimizers.append(opt)
 
     # ──────────────────────────────────────────────────────────
-    # 3.11 Prepare DataLoader (no DistributedSampler)
+    # 3.12 Prepare DataLoader (no DistributedSampler)
     # ──────────────────────────────────────────────────────────
     def collate_fn(batch):
         input_ids = torch.tensor([ex["input_ids"] for ex in batch], dtype=torch.long)
@@ -324,12 +411,12 @@ def main():
     )
 
     # ──────────────────────────────────────────────────────────
-    # 3.12 Setup Mixed Precision if Requested
+    # 3.13 Setup Mixed Precision if Requested
     # ──────────────────────────────────────────────────────────
     scaler = GradScaler() if args.fp16 else None
 
     # ──────────────────────────────────────────────────────────
-    # 3.13 Create TTAC Callback (unchanged)
+    # 3.14 Create TTAC Callback (unchanged)
     # ──────────────────────────────────────────────────────────
     callback_args = {
         "report_ttac": dataset_config["report_ttac"],
@@ -339,7 +426,7 @@ def main():
     callback = MyClassifierCallback(callback_args)
 
     # ──────────────────────────────────────────────────────────
-    # 3.14 Training Loop: 2*K – 1 Pipeline Schedule
+    # 3.15 Training Loop: 2*K – 1 Pipeline Schedule
     # ──────────────────────────────────────────────────────────
     global_step = 0
     for epoch in range(NUM_EPOCHS):
@@ -371,22 +458,18 @@ def main():
                     i = t
                     x0 = input_chunks[i].to(DEVICE_LIST[0])    # [batch, seq_len] LongTensor
                     m0 = mask_chunks[i].to(DEVICE_LIST[0])     # [batch, seq_len] LongTensor
-                    lbl0 = label_chunks[i].to(DEVICE_LIST[0]) if NUM_GPUS == 1 else None
 
+                    # We only pass labels to a single‐GPU model, not to Stage0
                     if args.fp16:
                         with autocast():
-                            out0 = stages[0](x0, m0, labels=lbl0)
+                            out0 = stages[0](x0, m0)
                     else:
-                        out0 = stages[0](x0, m0, labels=lbl0)
+                        out0 = stages[0](x0, m0)
 
-                    if NUM_GPUS == 1:
-                        # Single‐stage classification: out0 is loss
-                        buf_loss[i] = out0
-                    else:
-                        # out0 is (hidden_states, attention_mask) on cuda:0
-                        h0, a0 = out0
-                        buf_h[0][i] = h0.detach()
-                        buf_m[0][i] = a0.detach()
+                    # out0 is (hidden_states, attention_mask)
+                    h0, a0 = out0
+                    buf_h[0][i] = h0.detach()
+                    buf_m[0][i] = a0.detach()
 
                 # ───────────────────────────────────────────────────
                 # (2) Stage k Forward for 1 ≤ k ≤ N-2:
@@ -468,19 +551,11 @@ def main():
                     m0_rec = mask_chunks[i].to(DEVICE_LIST[0])
                     if args.fp16:
                         with autocast():
-                            if NUM_GPUS == 1:
-                                loss0_rec = stages[0](x0_rec, m0_rec, labels=label_chunks[i].to(DEVICE_LIST[0]))
-                                scaler.scale(loss0_rec).backward(retain_graph=True)
-                            else:
-                                h0_rec, _ = stages[0](x0_rec, m0_rec)
-                                h0_rec.backward(grad_buf[0][i], retain_graph=True)
-                    else:
-                        if NUM_GPUS == 1:
-                            loss0_rec = stages[0](x0_rec, m0_rec, labels=label_chunks[i].to(DEVICE_LIST[0]))
-                            loss0_rec.backward(retain_graph=True)
-                        else:
                             h0_rec, _ = stages[0](x0_rec, m0_rec)
                             h0_rec.backward(grad_buf[0][i], retain_graph=True)
+                    else:
+                        h0_rec, _ = stages[0](x0_rec, m0_rec)
+                        h0_rec.backward(grad_buf[0][i], retain_graph=True)
 
             # ──────────────────────────────────────────────────────────
             # (b) Optimizer Step: update each stage’s parameters
