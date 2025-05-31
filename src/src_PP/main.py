@@ -706,10 +706,22 @@ class Stage0(nn.Module):
         # (a) The embedding layer is the same one inside `full_model.model.embed_tokens`
         self.embed = full_model.model.embed_tokens.to(self.device)
 
-        # (b) A contiguous slice of transformer blocks from layer_start to layer_end
-        self.layers = nn.ModuleList(
-            [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
-        )
+        # # (b) A contiguous slice of transformer blocks from layer_start to layer_end
+        # self.layers = nn.ModuleList(
+        #     [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
+        # )
+        
+        self.layers = nn.ModuleList()
+        for blk in full_model.model.layers[layer_start:layer_end]:
+            blk = blk.to(self.device)
+            # ──────────────────────────────────────────────────────────────────────
+            # Force-reassign rotary_emb on every attention in this block:
+            # (so that block.self_attn.rotary_emb is never None on cuda:0)
+            blk.self_attn.rotary_emb = LlamaRotaryEmbedding(
+                full_model.model.config
+            ).to(self.device)
+            # ──────────────────────────────────────────────────────────────────────
+            self.layers.append(blk)
 
         # ──────────────────────────────────────────────
         # NOTE: We do NOT re-assign rotary_emb here.  The original
@@ -766,10 +778,22 @@ class StageMiddle(nn.Module):
         super().__init__()
         self.device = torch.device(device)
 
+        # # A contiguous slice of transformer blocks [layer_start:layer_end]
+        # self.layers = nn.ModuleList(
+        #     [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
+        # )
+        
         # A contiguous slice of transformer blocks [layer_start:layer_end]
-        self.layers = nn.ModuleList(
-            [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
-        )
+        self.layers = nn.ModuleList()
+        for blk in full_model.model.layers[layer_start:layer_end]:
+            blk = blk.to(self.device)
+            # ───────────────────────────────────────────────────────────────────────────
+            # Force-reassign rotary_emb on every attention in this block:
+            blk.self_attn.rotary_emb = LlamaRotaryEmbedding(
+                full_model.model.config
+            ).to(self.device)
+            # ───────────────────────────────────────────────────────────────────────────
+            self.layers.append(blk)
 
         # Again—DO NOT reassign rotary_emb here.  The pre-trained blocks already have it.
 
@@ -813,10 +837,22 @@ class StageLast(nn.Module):
         super().__init__()
         self.device = torch.device(device)
 
+        # # Slice of transformer blocks [layer_start:layer_end]
+        # self.layers = nn.ModuleList(
+        #     [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
+        # )
+        
         # Slice of transformer blocks [layer_start:layer_end]
-        self.layers = nn.ModuleList(
-            [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
-        )
+        self.layers = nn.ModuleList()
+        for blk in full_model.model.layers[layer_start:layer_end]:
+            blk = blk.to(self.device)
+            # ───────────────────────────────────────────────────────────────────────────
+            # Force-reassign rotary_emb on every attention in this block:
+            blk.self_attn.rotary_emb = LlamaRotaryEmbedding(
+                full_model.model.config
+            ).to(self.device)
+            # ───────────────────────────────────────────────────────────────────────────
+            self.layers.append(blk)
 
         # Final LayerNorm
         self.final_norm = full_model.model.norm.to(self.device)
