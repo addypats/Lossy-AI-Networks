@@ -1,6 +1,10 @@
 # Make GPUs 0,1,2,3 visible to all commands in this script
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
+
+# Torchrun binary
+TORCHRUN=$(which torchrun)
+
 # Now your run loop can refer to those four GPUs without needing to set CUDA_VISIBLE_DEVICES again
 MODEL="meta-llama/Llama-3.2-1B"
 DATASET="winogrande"
@@ -26,20 +30,26 @@ for loss_rate in "${LOSS_RATES[@]}"; do
         fp16_flag="--fp16"
       fi
 
-      python src/src_PP/main.py \
-        --model_name "$MODEL" \
-        --dataset "$DATASET" \
-        --loss_rate "$loss_rate" \
-        --num_nodes "$nodes" \
-        --batch_size $((16 * ${nodes})) \
-        --learning_rate 2e-5 \
-        $fp16_flag \
-        -nunf 3 \
-        --run_id "$run_id" \
-        --epochs 4 \
-        --max_length 256 \
-        --save_steps 100 \
-        --logging_steps 10
+      $TORCHRUN \
+          --nproc_per_node $tp_size \
+          --nnodes=1 \
+          --rdzv_id=pipeline_test \
+          --rdzv_backend=c10d \
+          --rdzv_endpoint=127.0.0.1:29500 \
+          python src/src_PP/main.py \
+            --model_name "$MODEL" \
+            --dataset "$DATASET" \
+            --loss_rate "$loss_rate" \
+            --num_nodes "$nodes" \
+            --batch_size $((16 * ${nodes})) \
+            --learning_rate 2e-5 \
+            $fp16_flag \
+            -nunf 3 \
+            --run_id "$run_id" \
+            --epochs 4 \
+            --max_length 256 \
+            --save_steps 100 \
+            --logging_steps 10
 
       echo "Completed experiment: $run_id"
       echo "------------------------------------"
