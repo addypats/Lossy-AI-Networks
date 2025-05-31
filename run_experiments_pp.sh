@@ -3,13 +3,13 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # Now your run loop can refer to those four GPUs without needing to set CUDA_VISIBLE_DEVICES again
 MODEL="meta-llama/Llama-3.2-1B"
-DATASET="piqa"
+DATASET="winogrande"
 
 # LOSS_RATES=("0.0" "0.001" "0.005" "0.01")
 # NUM_NODES=("2" "4")
 # PRECISION=("32" "16")
 
-LOSS_RATES=("0.001")
+LOSS_RATES=("0")
 NUM_NODES=("4")
 PRECISION=("32")
 
