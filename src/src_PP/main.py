@@ -17,6 +17,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
 
+
 # ============================================
 # 1) Helper: Zero out a fraction of a Tensor
 # ============================================
@@ -30,6 +31,7 @@ def zero_some_fraction(tensor: torch.Tensor, percent: float) -> torch.Tensor:
     mask = (torch.rand_like(tensor) >= percent).to(tensor.dtype)
     return tensor * mask
 
+
 # ============================================
 # 2) Define a Dynamic PipelineStage for Classification
 # ============================================
@@ -39,8 +41,9 @@ class PipelineStage(nn.Module):
       - The embedding + some number of transformer blocks, or
       - A middle slice of transformer blocks, or
       - The last transformer blocks + final classification head.
-    
-    We will shard `model_cls.model.layers` across `num_nodes` GPUs, respecting any freezing.
+
+    On Stage 0: forward(...) will receive (input_ids: LongTensor, attention_mask: LongTensor).
+    On all other stages: forward(...) will receive (hidden_states: FloatTensor, attention_mask: LongTensor).
     """
     def __init__(self, full_model, layer_start: int, layer_end: int,
                  is_last_stage: bool, device: str):
@@ -54,64 +57,71 @@ class PipelineStage(nn.Module):
         super().__init__()
         self.device = torch.device(device)
 
-        # (1) If this is the first stage, take the embedding from full_model
+        # (1) If this is the first stage, take the embedding layer
         if layer_start == 0:
-            # full_model.model.embed_tokens is the embedding layer
             self.embed = full_model.model.embed_tokens.to(self.device)
         else:
             self.embed = None
 
-        # (2) Always take the transformer blocks for [layer_start:layer_end]
+        # (2) Take the transformer blocks for [layer_start:layer_end]
         self.layers = nn.ModuleList(
             [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
         )
 
-        # (3) If this is the last stage, also attach the final LayerNorm + classification head
+        # (3) If this is the last stage, also attach final LayerNorm + classification head
         self.is_last = is_last_stage
         if is_last_stage:
-            # `full_model.model.norm` is the final layer norm on the hidden states
             self.final_norm = full_model.model.norm.to(self.device)
-            # `full_model.score` is the classification head (a linear layer)
             self.classifier = full_model.score.to(self.device)
         else:
             self.final_norm = None
             self.classifier = None
 
-    def forward(self, hidden_states, attention_mask, labels=None):
+    def forward(self, hidden_or_input: torch.Tensor, attention_mask: torch.Tensor, labels=None):
         """
-        hidden_states:    Tensor [batch, seq_len, hidden_dim] on self.device,
-                          or None if this is Stage 0.
-        attention_mask:   Tensor [batch, seq_len] on self.device,
-                          or None if this is Stage 0.
-        labels:           Tensor [batch] (int) on self.device, used only in last stage.
-        """
-        # (A) If this is Stage 0, we expect `hidden_states` and `attention_mask` to be None,
-        #     and instead we will receive `input_ids` & `attention_mask` directly in main().
-        #     That logic is handled in main(); for this method we assume we always get
-        #     `hidden_states` and `attention_mask` that are already on `self.device`.
-        h = hidden_states
-        m = attention_mask
+        If this is Stage 0:
+          - hidden_or_input : LongTensor of token IDs (shape [batch, seq_len]) on self.device
+          - attention_mask  : LongTensor of same shape (for masking)
+          - labels may be None or a LongTensor (for classification loss)
+          In that case, we must do:
+            hidden_states = self.embed(token_ids)
+            then feed hidden_states, attention_mask through transformer blocks.
 
-        # (B) Pass through each transformer block
+        If this is Stage k > 0:
+          - hidden_or_input : FloatTensor (shape [batch, seq_len, hidden_dim]) on self.device
+          - attention_mask  : LongTensor of shape [batch, seq_len]
+          - labels only passed if this is the last stage.
+          Then we feed hidden_states directly through transformer blocks.
+        """
+        # Determine if we’re in Stage 0 by checking if self.embed is not None AND
+        # the incoming tensor is of integer dtype (LongTensor).
+        if self.embed is not None and hidden_or_input.dtype in (torch.int32, torch.int64):
+            # Stage 0 path: hidden_or_input is actually input_ids
+            input_ids = hidden_or_input
+            mask = attention_mask
+            # 1. Embed tokens
+            h = self.embed(input_ids)  # [batch, seq_len, hidden_dim]
+            m = mask
+        else:
+            # Intermediate or final stage: hidden_or_input is already hidden states
+            h = hidden_or_input
+            m = attention_mask
+
+        # 2. Pass through transformer blocks
         for block in self.layers:
             h = block(h, attention_mask=m)[0]  # block returns (hidden_states, _)
 
-        # (C) If this is the final stage, apply final norm + classification head
+        # 3. If this is the final stage, apply final norm + classification head
         if self.is_last:
-            h = self.final_norm(h)  # [batch, seq_len, hidden_dim]
-            # For classification, we typically take the hidden state corresponding to the first token
-            # (i.e. h[:, 0, :]) or apply pooling. The original auto‐model does something similar internally.
-            # Here, `full_model.score` expects input of shape [batch, hidden_dim], so we grab h[:, 0, :].
-            cls_token = h[:, 0, :]             # [batch, hidden_dim]
-            logits = self.classifier(cls_token)  # [batch, num_labels]
+            h_norm = self.final_norm(h)         # [batch, seq_len, hidden_dim]
+            cls_token = h_norm[:, 0, :]         # [batch, hidden_dim]
+            logits = self.classifier(cls_token) # [batch, num_labels]
             if labels is not None:
-                # Compute classification loss
                 loss_fct = nn.CrossEntropyLoss()
-                loss = loss_fct(logits, labels)
-                return loss
+                return loss_fct(logits, labels)
             return logits
 
-        # (D) Otherwise, this is an intermediate stage: return (hidden_states, attention_mask)
+        # 4. Otherwise, return intermediate hidden states + mask
         return h, m
 
 
@@ -125,7 +135,7 @@ def main():
     parser.add_argument('--loss_rate', type=float, default=0.001, help='Packet loss rate (0.0–1.0)')
     parser.add_argument('--seed', type=int, default=1234, help='Random seed')
     parser.add_argument('--model_name', type=str, default='meta-llama/Llama-3.2-1B',
-                        help='Model name (HuggingFace checkpoint for AutoModelForSequenceClassification)')
+                        help='Model name (checkpoint for AutoModelForSequenceClassification)')
     parser.add_argument('--batch_size', type=int, default=64, help='Global batch size (must divide by num_nodes)')
     parser.add_argument('--fp16', action='store_true', help='Use mixed precision (FP16)')
     parser.add_argument('--output_dir', type=str, default='./output', help='Output directory')
@@ -152,7 +162,7 @@ def main():
     # ──────────────────────────────────────────────────────────
     # 3.2 Load dataset_config.yaml (unchanged)
     # ──────────────────────────────────────────────────────────
-    with open("src/dataset_config.yaml") as config_file:
+    with open("src/src_PP/dataset_config.yaml") as config_file:
         dataset_config_full = yaml.safe_load(config_file)
     dataset_config = dataset_config_full[args.dataset]
 
@@ -170,8 +180,8 @@ def main():
         num_labels=dataset_config["num_labels"],
         num_unfrozen_layers=args.num_unfrozen_layers
     )
-    # By default, get_classifier_and_tokenizer may freeze all but the last N layers.
-    # model_cls is an AutoModelForSequenceClassification.
+    # Now `model_cls` is an AutoModelForSequenceClassification (e.g. LlamaForSequenceClassification),
+    # with the first (TOTAL_LAYERS - num_unfrozen_layers) blocks frozen if num_unfrozen_layers is not None.
 
     # ──────────────────────────────────────────────────────────
     # 3.5 Load train & eval datasets (unchanged)
@@ -210,12 +220,12 @@ def main():
     # 3.8 Pipeline Hyperparameters (from args)
     # ──────────────────────────────────────────────────────────
     NUM_GPUS = args.num_nodes
-    TOTAL_LAYERS = model_cls.model.config.num_hidden_layers  # e.g. 32 for Llama 3.2-1B
-    assert TOTAL_LAYERS % NUM_GPUS == 0, f"Total layers ({TOTAL_LAYERS}) must be divisible by --num_nodes"
+    TOTAL_LAYERS = model_cls.model.config.num_hidden_layers  # e.g. 32 for Llama-3.2-1B
+    assert TOTAL_LAYERS % NUM_GPUS == 0, f"Total layers ({TOTAL_LAYERS}) must be divisible by num_nodes"
     LAYERS_PER_STAGE = TOTAL_LAYERS // NUM_GPUS
 
     GLOBAL_BATCH_SIZE = args.batch_size
-    MICRO_BATCHES = NUM_GPUS   # one micro-batch per GPU
+    MICRO_BATCHES = NUM_GPUS  # often we choose one micro-batch per GPU
     assert GLOBAL_BATCH_SIZE % MICRO_BATCHES == 0, "Global batch size must be divisible by num_nodes"
     MICRO_BATCH_SIZE = GLOBAL_BATCH_SIZE // MICRO_BATCHES
 
@@ -229,21 +239,18 @@ def main():
     DEVICE_LIST = [f"cuda:{i}" for i in range(NUM_GPUS)]
     for d in DEVICE_LIST:
         if not torch.cuda.is_available():
-            raise ValueError(f"{d} is not available")
+            raise RuntimeError(f"{d} is not available")
 
     # ──────────────────────────────────────────────────────────
     # 3.9 Instantiate Pipeline Stages from the classification model
     # ──────────────────────────────────────────────────────────
-    # We use `model_cls.model.layers` (ModuleList of transformer blocks),
-    # and `model_cls.model.embed_tokens` for the embedding,
-    # plus `model_cls.model.norm` and `model_cls.score` for the final head.
     stages = []
     for i in range(NUM_GPUS):
         start_idx = i * LAYERS_PER_STAGE
         end_idx = start_idx + LAYERS_PER_STAGE
         is_last = (i == NUM_GPUS - 1)
         stage = PipelineStage(
-            full_model=model_cls,        # the AutoModelForSequenceClassification on CPU
+            full_model=model_cls,         # AutoModelForSequenceClassification on CPU
             layer_start=start_idx,
             layer_end=end_idx,
             is_last_stage=is_last,
@@ -310,18 +317,18 @@ def main():
         for batch in train_loader:
             # (a) Split the global batch into MICRO_BATCHES micro-batches
             input_chunks = batch["input_ids"].chunk(MICRO_BATCHES)
-            mask_chunks  = batch["attention_mask"].chunk(MICRO_BATCHES)
+            mask_chunks = batch["attention_mask"].chunk(MICRO_BATCHES)
             label_chunks = batch["labels"].chunk(MICRO_BATCHES)
 
-            # Buffers for activations & masks at each stage
-            buf_h = [ [None]*MICRO_BATCHES for _ in range(NUM_GPUS) ]
-            buf_m = [ [None]*MICRO_BATCHES for _ in range(NUM_GPUS) ]
+            # Buffers to hold activations & masks at each stage
+            buf_h = [[None] * MICRO_BATCHES for _ in range(NUM_GPUS)]
+            buf_m = [[None] * MICRO_BATCHES for _ in range(NUM_GPUS)]
 
-            # Buffers for losses at final stage and gradients upstream
+            # Buffers to hold final losses and upstream gradients
             buf_loss = [None] * MICRO_BATCHES
-            grad_buf = [ [None]*MICRO_BATCHES for _ in range(NUM_GPUS - 1) ]
+            grad_buf = [[None] * MICRO_BATCHES for _ in range(NUM_GPUS - 1)]
 
-            # Zero all optimizers
+            # Zero out all optimizers
             for opt in optimizers:
                 opt.zero_grad()
 
@@ -332,20 +339,22 @@ def main():
                 # ───────────────────────────────────────────────────
                 if t < MICRO_BATCHES:
                     i = t
-                    x0 = input_chunks[i].to(DEVICE_LIST[0])
-                    m0 = mask_chunks[i].to(DEVICE_LIST[0])
-                    lbl = label_chunks[i].to(DEVICE_LIST[0]) if NUM_GPUS == 1 else None
+                    x0 = input_chunks[i].to(DEVICE_LIST[0])      # input_ids
+                    m0 = mask_chunks[i].to(DEVICE_LIST[0])       # attention_mask
+                    lbl0 = label_chunks[i].to(DEVICE_LIST[0]) if NUM_GPUS == 1 else None
 
                     if args.fp16:
                         with autocast():
-                            out = stages[0](x0, m0, labels=lbl)
+                            out0 = stages[0](x0, m0, labels=lbl0)
                     else:
-                        out = stages[0](x0, m0, labels=lbl)
+                        out0 = stages[0](x0, m0, labels=lbl0)
 
                     if NUM_GPUS == 1:
-                        buf_loss[i] = out  # single-stage classification model
+                        # Single‐stage classification model
+                        buf_loss[i] = out0
                     else:
-                        h0, a0 = out        # intermediate output
+                        # out0 is (hidden_states, attention_mask) on cuda:0
+                        h0, a0 = out0
                         buf_h[0][i] = h0.detach()
                         buf_m[0][i] = a0.detach()
 
@@ -356,8 +365,8 @@ def main():
                 for k in range(1, NUM_GPUS - 1):
                     if k <= t < (MICRO_BATCHES + k):
                         i = t - k
-                        h_in = buf_h[k-1][i].to(DEVICE_LIST[k]).requires_grad_(True)
-                        m_in = buf_m[k-1][i].to(DEVICE_LIST[k])
+                        h_in = buf_h[k - 1][i].to(DEVICE_LIST[k]).requires_grad_(True)
+                        m_in = buf_m[k - 1][i].to(DEVICE_LIST[k])
                         if args.fp16:
                             with autocast():
                                 h_out, a_out = stages[k](h_in, m_in)
@@ -430,7 +439,7 @@ def main():
                     if args.fp16:
                         with autocast():
                             if NUM_GPUS == 1:
-                                # Single-stage classification
+                                # Single-per-stage classification
                                 loss0_rec = stages[0](x0_rec, m0_rec, labels=label_chunks[i].to(DEVICE_LIST[0]))
                                 scaler.scale(loss0_rec).backward(retain_graph=True)
                             else:
