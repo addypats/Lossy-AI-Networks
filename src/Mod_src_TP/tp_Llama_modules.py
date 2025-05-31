@@ -293,9 +293,15 @@ class TensorParallelLlamaAttention(LlamaAttention):
         assert (self.head_dim % world_size) == 0, "head_dim must be divisible by world_size"
         self.local_hidden = self.hidden_size // world_size  # H/W
 
-        # Initialize rotary embeddings
+        # # Initialize rotary embeddings
+        # self.rotary_emb = LlamaRotaryEmbedding(
+        #     base=llama_config.rotary_embedding_base,
+        #     head_dim=self.head_dim,
+        #     freqs_for="vertical"
+        # )
+        
+        # Initialize rotary embeddings (use default base=10000 since `rotary_embedding_base` is not in LlamaConfig)
         self.rotary_emb = LlamaRotaryEmbedding(
-            base=llama_config.rotary_embedding_base,
             head_dim=self.head_dim,
             freqs_for="vertical"
         )
