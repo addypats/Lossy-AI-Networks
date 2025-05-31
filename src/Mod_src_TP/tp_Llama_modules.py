@@ -283,7 +283,15 @@ class TensorParallelLlamaAttention(nn.Module):
         pretrained_o_weight:   full [H, H] weight from pretrained o_proj
         pretrained_o_bias:     full [H] bias from pretrained o_proj (or None)
         """
-        super().__init__()
+        # super().__init__()
+        super().__init__(
+            llama_config,
+            layer_idx,
+            use_cache=False,
+            num_key_value_heads=llama_config.num_key_value_heads,
+            head_dim=llama_config.hidden_size // llama_config.num_attention_heads,
+            # (no rotary_embedding arguments)
+        )
         self.world_size = world_size
         self.group = group
         self.hidden_size = llama_config.hidden_size
@@ -293,11 +301,11 @@ class TensorParallelLlamaAttention(nn.Module):
         self.local_hidden = self.hidden_size // world_size   # H/W
 
         # rotary embeddings
-        self.rotary_emb = LlamaRotaryEmbedding(
-            base=llama_config.rotary_embedding_base,
-            head_dim=self.head_dim,
-            freqs_for="vertical"
-        )
+        # self.rotary_emb = LlamaRotaryEmbedding(
+        #     base=llama_config.rotary_embedding_base,
+        #     head_dim=self.head_dim,
+        #     freqs_for="vertical"
+        # )
 
         # LayerNorm before attention
         self.input_layernorm = LlamaRMSNorm(self.hidden_size, eps=llama_config.rms_norm_eps)
