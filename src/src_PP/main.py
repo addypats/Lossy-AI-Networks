@@ -935,11 +935,12 @@ def pipeline_forward_backward(stages, optimizers, input_chunks, mask_chunks, lab
                 
                 if use_fp16:
                     with autocast():
-                        h, mask = stages[0](input_ids, attention_mask)
+                        h, mask, pos_ids = stages[0](input_ids, attention_mask)
                 else:
-                    h, mask = stages[0](input_ids, attention_mask)
+                    h, mask, pos_ids = stages[0](input_ids, attention_mask)
                 
-                activations[(0, mb)] = (h.detach().requires_grad_(True), mask)
+                # Store the third element (pos_ids) as well
+                activations[(0, mb)] = (h.detach().requires_grad_(True), mask, pos_ids)
                 
             elif stage_idx == num_stages - 1:
                 h_in, mask_in = activations[(stage_idx - 1, mb)]
@@ -985,9 +986,11 @@ def pipeline_forward_backward(stages, optimizers, input_chunks, mask_chunks, lab
                 # Recompute forward pass
                 if use_fp16:
                     with autocast():
-                        h_recompute, _ = stages[0](input_ids, attention_mask)
+                        # h_recompute, _ = stages[0](input_ids, attention_mask)
+                        h_recompute, _, _ = stages[0](input_ids, attention_mask)
                 else:
-                    h_recompute, _ = stages[0](input_ids, attention_mask)
+                    # h_recompute, _ = stages[0](input_ids, attention_mask)
+                    h_recompute, _, _ = stages[0](input_ids, attention_mask)
                 
                 # Backward pass
                 upstream_grad = input_grads[(0, old_mb)]
@@ -996,16 +999,19 @@ def pipeline_forward_backward(stages, optimizers, input_chunks, mask_chunks, lab
             else:
                 # Middle stage backward
                 h_stored, mask_stored = activations[(stage_idx, old_mb)]
-                h_in, mask_in = activations[(stage_idx - 1, old_mb)]
+                h_in, mask_in, pos_ids_in = activations[(stage_idx - 1, old_mb)]
                 h_in = h_in.to(device_list[stage_idx])
                 mask_in = mask_in.to(device_list[stage_idx])
+                pos_ids_in = pos_ids_in.to(device_list[stage_idx])
                 
                 # Recompute forward pass
                 if use_fp16:
                     with autocast():
-                        h_recompute, _ = stages[stage_idx](h_in, mask_in)
+                        # h_recompute, _ = stages[stage_idx](h_in, mask_in)
+                        h_recompute, _, _ = stages[stage_idx](h_in, mask_in, pos_ids_in)
                 else:
-                    h_recompute, _ = stages[stage_idx](h_in, mask_in)
+                    # h_recompute, _ = stages[stage_idx](h_in, mask_in)
+                    h_recompute, _, _ = stages[stage_idx](h_in, mask_in, pos_ids_in)
                 
                 # Backward pass
                 upstream_grad = input_grads[(stage_idx, old_mb)]
@@ -1028,24 +1034,29 @@ def pipeline_forward_backward(stages, optimizers, input_chunks, mask_chunks, lab
                     
                     if use_fp16:
                         with autocast():
-                            h_recompute, _ = stages[0](input_ids, attention_mask)
+                            # h_recompute, _ = stages[0](input_ids, attention_mask)
+                            h_recompute, _, _ = stages[0](input_ids, attention_mask)
                     else:
-                        h_recompute, _ = stages[0](input_ids, attention_mask)
+                        # h_recompute, _ = stages[0](input_ids, attention_mask)
+                        h_recompute, _, _ = stages[0](input_ids, attention_mask)
                     
                     upstream_grad = input_grads[(0, old_mb)]
                     h_recompute.backward(upstream_grad)
                     
                 else:
                     h_stored, mask_stored = activations[(stage_idx, old_mb)]
-                    h_in, mask_in = activations[(stage_idx - 1, old_mb)]
+                    h_in, mask_in, pos_ids_in = activations[(stage_idx - 1, old_mb)]
                     h_in = h_in.to(device_list[stage_idx])
                     mask_in = mask_in.to(device_list[stage_idx])
+                    pos_ids_in = pos_ids_in.to(device_list[stage_idx])
                     
                     if use_fp16:
                         with autocast():
-                            h_recompute, _ = stages[stage_idx](h_in, mask_in)
+                            # h_recompute, _ = stages[stage_idx](h_in, mask_in)
+                            h_recompute, _, _ = stages[stage_idx](h_in, mask_in, pos_ids_in)
                     else:
-                        h_recompute, _ = stages[stage_idx](h_in, mask_in)
+                        # h_recompute, _ = stages[stage_idx](h_in, mask_in)
+                        h_recompute, _, _ = stages[stage_idx](h_in, mask_in, pos_ids_in)
                     
                     upstream_grad = input_grads[(stage_idx, old_mb)]
                     h_recompute.backward(upstream_grad)
@@ -1377,31 +1388,46 @@ def main():
                     
                     if args.fp16:
                         with autocast():
-                            h, mask = stages[0](input_ids, attention_mask)
+                            # h, mask = stages[0](input_ids, attention_mask)
+                            h, mask, pos_ids = stages[0](input_ids, attention_mask)
                     else:
-                        h, mask = stages[0](input_ids, attention_mask)
+                        # h, mask = stages[0](input_ids, attention_mask)
+                        h, mask, pos_ids = stages[0](input_ids, attention_mask)
                     
                     # Middle stages
                     for i in range(1, NUM_GPUS - 1):
                         h = h.to(DEVICE_LIST[i])
                         mask = mask.to(DEVICE_LIST[i])
+                        # if args.fp16:
+                        #     with autocast():
+                        #         h, mask = stages[i](h, mask)
+                        # else:
+                        #     h, mask = stages[i](h, mask)
                         if args.fp16:
                             with autocast():
-                                h, mask = stages[i](h, mask)
+                                h, mask, pos_ids = stages[i](h, mask, pos_ids)
                         else:
-                            h, mask = stages[i](h, mask)
+                            h, mask, pos_ids = stages[i](h, mask, pos_ids)
                     
                     # Final stage
                     h = h.to(DEVICE_LIST[-1])
                     mask = mask.to(DEVICE_LIST[-1])
                     labels = label_chunks[mb_idx].to(DEVICE_LIST[-1])
                     
+                    # if args.fp16:
+                    #     with autocast():
+                    #         logits = stages[-1](h, mask)
+                    #         loss = nn.CrossEntropyLoss()(logits, labels)
+                    # else:
+                    #     logits = stages[-1](h, mask)
+                    #     loss = nn.CrossEntropyLoss()(logits, labels)
+                    
                     if args.fp16:
                         with autocast():
-                            logits = stages[-1](h, mask)
+                            logits = stages[-1](h, mask, pos_ids)
                             loss = nn.CrossEntropyLoss()(logits, labels)
                     else:
-                        logits = stages[-1](h, mask)
+                        logits = stages[-1](h, mask, pos_ids)
                         loss = nn.CrossEntropyLoss()(logits, labels)
                     
                     # Collect predictions and labels
