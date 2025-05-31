@@ -5,7 +5,9 @@ from data import get_dataset
 from transformers import TrainingArguments
 import os
 import yaml
+import argparse
 from models import get_classifier_and_tokenizer
+import torch.distributed.rpc as rpc
 
 def main(args):
 
@@ -16,6 +18,25 @@ def main(args):
             print(exc)
     
     dataset_config = dataset_config[args.dataset]
+    
+    rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    #
+    #    Give each worker a unique name (e.g. "worker0", "worker1", …).
+    #
+    worker_name = f"worker{rank}"
+
+    # Choose an RPC backend; commonly "tensorpipe" (for GPU) or "gloo".  
+    # Below we use TensorPipe with the default init_method="env://".
+    #
+    rpc_backend_options = rpc.TensorPipeRpcBackendOptions(init_method="env://")
+    rpc.init_rpc(
+        name=worker_name,
+        rank=rank,
+        world_size=world_size,
+        rpc_backend_options=rpc_backend_options
+    )
+    
     network = LossyNetwork(args)
     network.set_seed(args.seed)
 
@@ -69,6 +90,8 @@ def main(args):
     )
 
     trainer.train()
+    
+    rpc.shutdown()
 
 if __name__ == "__main__":
     import argparse
