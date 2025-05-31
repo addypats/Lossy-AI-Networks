@@ -693,65 +693,44 @@ def zero_some_fraction(tensor: torch.Tensor, percent: float) -> torch.Tensor:
 # 2.A) Stage0: Embedding + transformer blocks
 # ============================================
 class Stage0(nn.Module):
-    """
-    Stage 0: holds the embedding layer + a contiguous slice of transformer blocks.
-    Expects input: (input_ids: LongTensor, attention_mask: LongTensor) on cuda:0
-    Returns: (hidden_states: FloatTensor, attention_mask: LongTensor) on cuda:0
-    """
     def __init__(self, full_model, layer_start: int, layer_end: int, device: str):
-        """
-        full_model:  AutoModelForSequenceClassification loaded on CPU
-        layer_start/layer_end: indices into full_model.model.layers
-        device:      e.g. "cuda:0"
-        """
         super().__init__()
         self.device = torch.device(device)
-
-        # Embedding from the base model
         self.embed = full_model.model.embed_tokens.to(self.device)
-
-        # A slice of transformer blocks [layer_start:layer_end]
         self.layers = nn.ModuleList(
             [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
         )
+        
+        # Initialize rotary embeddings for all layers
+        for layer in self.layers:
+            layer.self_attn.rotary_emb = LlamaRotaryEmbedding(
+                dim=full_model.config.hidden_size // full_model.config.num_attention_heads,
+                max_position_embeddings=full_model.config.max_position_embeddings,
+                base=full_model.config.rope_theta
+            ).to(self.device)
 
     def forward(self, input_ids: torch.LongTensor, attention_mask: torch.LongTensor):
-        """
-        input_ids:      LongTensor [batch, seq_len] on cuda:0
-        attention_mask: LongTensor [batch, seq_len] on cuda:0
-        """
-        # (1) Embed tokens → [batch, seq_len, hidden_dim]
-        h = self.embed(input_ids)  # -> (batch, seq_len, hidden_dim)
-
-        # (2) Build position IDs: 0..(seq_len-1) for every batch
+        h = self.embed(input_ids)
         batch_size, seq_len = input_ids.size()
-        position_ids = (
-            torch.arange(seq_len, device=self.device)
-            .unsqueeze(0)
-            .expand(batch_size, seq_len)
-        )  # [batch, seq_len] long
-
-        # (3) Pass through each transformer block, supplying position_ids
+        
+        # Generate position_ids once and propagate
+        position_ids = torch.arange(seq_len, device=self.device)
+        position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_len)
+        
         for block in self.layers:
             h = block(
                 h,
                 attention_mask=attention_mask,
                 position_ids=position_ids
             )[0]
-
-        # (4) Return hidden states + attention mask for the next stage
-        return h, attention_mask
+            
+        return h, attention_mask, position_ids  # Return position_ids  
 
 
 # ============================================
 # 2.B) StageMiddle: Intermediate transformer blocks
 # ============================================
 class StageMiddle(nn.Module):
-    """
-    Stage k where 1 ≤ k ≤ N-2.  Holds a contiguous slice of transformer blocks.
-    Expects input: (hidden_states: FloatTensor, attention_mask: LongTensor) on cuda:k
-    Returns: (hidden_states: FloatTensor, attention_mask: LongTensor) on cuda:k
-    """
     def __init__(self, full_model, layer_start: int, layer_end: int, device: str):
         super().__init__()
         self.device = torch.device(device)
@@ -759,42 +738,21 @@ class StageMiddle(nn.Module):
             [blk.to(self.device) for blk in full_model.model.layers[layer_start:layer_end]]
         )
 
-    def forward(self, hidden_states: torch.FloatTensor, attention_mask: torch.LongTensor):
-        """
-        hidden_states:  FloatTensor [batch, seq_len, hidden_dim] on cuda:k
-        attention_mask: LongTensor [batch, seq_len] on cuda:k
-        """
-        h = hidden_states  # [batch, seq_len, hidden_dim]
-        batch_size, seq_len, _ = h.size()
-
-        # (1) Build position IDs
-        position_ids = (
-            torch.arange(seq_len, device=self.device)
-            .unsqueeze(0)
-            .expand(batch_size, seq_len)
-        )  # [batch, seq_len] long
-
-        # (2) Pass through each transformer block, supplying position_ids
+    def forward(self, hidden_states: torch.FloatTensor, attention_mask: torch.LongTensor, position_ids: torch.LongTensor):
+        h = hidden_states
         for block in self.layers:
             h = block(
                 h,
                 attention_mask=attention_mask,
-                position_ids=position_ids
+                position_ids=position_ids  # Use passed position_ids
             )[0]
-
-        return h, attention_mask
+        return h, attention_mask, position_ids
 
 
 # ============================================
 # 2.C) StageLast: Final transformer blocks + norm + classification head
 # ============================================
 class StageLast(nn.Module):
-    """
-    Stage N-1: holds a contiguous slice of transformer blocks,
-    plus final LayerNorm and classification head.
-    Expects input: (hidden_states: FloatTensor, attention_mask: LongTensor) on cuda:N-1
-    If labels are given, returns scalar loss; otherwise returns logits.
-    """
     def __init__(self, full_model, layer_start: int, layer_end: int, device: str):
         super().__init__()
         self.device = torch.device(device)
@@ -804,39 +762,22 @@ class StageLast(nn.Module):
         self.final_norm = full_model.model.norm.to(self.device)
         self.classifier = full_model.score.to(self.device)
 
-    def forward(self, hidden_states: torch.FloatTensor, attention_mask: torch.LongTensor, labels=None):
-        """
-        hidden_states:  FloatTensor [batch, seq_len, hidden_dim] on cuda:N-1
-        attention_mask: LongTensor [batch, seq_len] on cuda:N-1
-        labels:         LongTensor [batch] on cuda:N-1 (optional)
-        """
-        h = hidden_states  # [batch, seq_len, hidden_dim]
-        batch_size, seq_len, _ = h.size()
-
-        # (1) Build position IDs
-        position_ids = (
-            torch.arange(seq_len, device=self.device)
-            .unsqueeze(0)
-            .expand(batch_size, seq_len)
-        )  # [batch, seq_len] long
-
-        # (2) Pass through each transformer block, supplying position_ids
+    def forward(self, hidden_states: torch.FloatTensor, attention_mask: torch.LongTensor, position_ids: torch.LongTensor, labels=None):
+        h = hidden_states
         for block in self.layers:
             h = block(
                 h,
                 attention_mask=attention_mask,
-                position_ids=position_ids
+                position_ids=position_ids  # Use passed position_ids
             )[0]
-
-        # (3) Final norm + classification head
-        h_norm = self.final_norm(h)                 # [batch, seq_len, hidden_dim]
-        cls_token = h_norm[:, 0, :]                 # [batch, hidden_dim]
-        logits = self.classifier(cls_token)         # [batch, num_labels]
+            
+        h_norm = self.final_norm(h)
+        cls_token = h_norm[:, 0, :]
+        logits = self.classifier(cls_token)
 
         if labels is not None:
             loss_fct = nn.CrossEntropyLoss()
             return loss_fct(logits, labels)
-
         return logits
 
 
@@ -845,70 +786,61 @@ class StageLast(nn.Module):
 # ============================================
 def pipeline_forward_backward(stages, optimizers, input_chunks, mask_chunks, label_chunks, 
                              device_list, lossy_fraction, use_fp16=False, scaler=None):
-    """
-    Corrected pipeline forward and backward pass using 1F1B schedule.
-    """
     num_stages = len(stages)
     num_microbatches = len(input_chunks)
-    
-    # Storage for activations and gradients
-    activations = {}  # (stage_idx, microbatch_idx) -> activation
-    input_grads = {}  # (stage_idx, microbatch_idx) -> input gradient
-    
-    # Zero all optimizers
+    activations = {}
+    input_grads = {}
+
     for opt in optimizers:
         opt.zero_grad()
-    
-    # Phase 1: Warm-up - fill the pipeline
+
+    # Phase 1: Warm-up
     for mb in range(min(num_microbatches, num_stages)):
         for stage_idx in range(min(mb + 1, num_stages)):
             if stage_idx == 0:
-                # First stage
                 input_ids = input_chunks[mb].to(device_list[0])
                 attention_mask = mask_chunks[mb].to(device_list[0])
                 
                 if use_fp16:
                     with autocast():
-                        h, mask = stages[0](input_ids, attention_mask)
+                        h, mask, pos_ids = stages[0](input_ids, attention_mask)
                 else:
-                    h, mask = stages[0](input_ids, attention_mask)
+                    h, mask, pos_ids = stages[0](input_ids, attention_mask)
                 
-                activations[(0, mb)] = (h.detach().requires_grad_(True), mask)
+                activations[(0, mb)] = (h.detach().requires_grad_(True), mask, pos_ids)
                 
             elif stage_idx == num_stages - 1:
-                # Last stage
-                h_in, mask_in = activations[(stage_idx - 1, mb)]
+                h_in, mask_in, pos_ids_in = activations[(stage_idx - 1, mb)]
                 h_in = h_in.to(device_list[stage_idx])
                 mask_in = mask_in.to(device_list[stage_idx])
+                pos_ids_in = pos_ids_in.to(device_list[stage_idx])
                 labels = label_chunks[mb].to(device_list[stage_idx])
                 
                 if use_fp16:
                     with autocast():
-                        loss = stages[stage_idx](h_in, mask_in, labels=labels)
-                    # Backward pass
+                        loss = stages[stage_idx](h_in, mask_in, pos_ids_in, labels=labels)
                     scaler.scale(loss).backward()
                 else:
-                    loss = stages[stage_idx](h_in, mask_in, labels=labels)
+                    loss = stages[stage_idx](h_in, mask_in, pos_ids_in, labels=labels)
                     loss.backward()
                 
-                # Get gradient for previous stage
                 if h_in.grad is not None:
                     grad = zero_some_fraction(h_in.grad.detach(), lossy_fraction)
                     input_grads[(stage_idx - 1, mb)] = grad
                 
             else:
-                # Middle stages
-                h_in, mask_in = activations[(stage_idx - 1, mb)]
+                h_in, mask_in, pos_ids_in = activations[(stage_idx - 1, mb)]
                 h_in = h_in.to(device_list[stage_idx])
                 mask_in = mask_in.to(device_list[stage_idx])
+                pos_ids_in = pos_ids_in.to(device_list[stage_idx])
                 
                 if use_fp16:
                     with autocast():
-                        h_out, mask_out = stages[stage_idx](h_in, mask_in)
+                        h_out, mask_out, pos_ids_out = stages[stage_idx](h_in, mask_in, pos_ids_in)
                 else:
-                    h_out, mask_out = stages[stage_idx](h_in, mask_in)
+                    h_out, mask_out, pos_ids_out = stages[stage_idx](h_in, mask_in, pos_ids_in)
                 
-                activations[(stage_idx, mb)] = (h_out.detach().requires_grad_(True), mask_out)
+                activations[(stage_idx, mb)] = (h_out.detach().requires_grad_(True), mask_out, pos_ids_out)
     
     # Phase 2: Steady state - 1F1B pattern
     for mb in range(num_stages, num_microbatches):
