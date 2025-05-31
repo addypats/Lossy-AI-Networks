@@ -583,8 +583,10 @@ class TensorParallelLlamaDecoderLayer(nn.Module):
         self.config = llama_config
 
         # Extract pretrained weights from hf_decoder_layer
-        qkv_w = hf_decoder_layer.self_attn.q_proj.weight.data    # [H, H]
-        qkv_b = hf_decoder_layer.self_attn.q_proj.bias.data      # [H]
+        
+        # qkv_w = hf_decoder_layer.self_attn.q_proj.weight.data    # [H, H]
+        # qkv_b = hf_decoder_layer.self_attn.q_proj.bias.data      # [H]
+        
         # Note: HuggingFace’s Llama fuses Q, K, V into a single tensor by concatenation if use_fused? 
         # Actually in code they do q_proj = nn.Linear(H, H) and k_proj, v_proj separately. 
         # But in many versions they instead store as a single fused weight. We must check carefully:
@@ -594,20 +596,46 @@ class TensorParallelLlamaDecoderLayer(nn.Module):
         # But our TP implementation expects a fused [H, 3H]. We can construct it manually:
         #    fused_qkv = torch.cat([q_proj.weight, k_proj.weight, v_proj.weight], dim=1), similarly for bias.
 
-        # 1) Build fused QKV weight & bias:
-        q_w = hf_decoder_layer.self_attn.q_proj.weight.data           # [H, H]
-        k_w = hf_decoder_layer.self_attn.k_proj.weight.data           # [H, H]
-        v_w = hf_decoder_layer.self_attn.v_proj.weight.data           # [H, H]
-        fused_qkv_w = torch.cat([q_w, k_w, v_w], dim=1)               # [H, 3H]
+        # # 1) Build fused QKV weight & bias:
+        # q_w = hf_decoder_layer.self_attn.q_proj.weight.data           # [H, H]
+        # k_w = hf_decoder_layer.self_attn.k_proj.weight.data           # [H, H]
+        # v_w = hf_decoder_layer.self_attn.v_proj.weight.data           # [H, H]
+        # fused_qkv_w = torch.cat([q_w, k_w, v_w], dim=1)               # [H, 3H]
 
-        # If biases exist:
-        if hf_decoder_layer.self_attn.q_proj.bias is not None:
-            q_b = hf_decoder_layer.self_attn.q_proj.bias.data         # [H]
-            k_b = hf_decoder_layer.self_attn.k_proj.bias.data         # [H]
-            v_b = hf_decoder_layer.self_attn.v_proj.bias.data         # [H]
-            fused_qkv_b = torch.cat([q_b, k_b, v_b], dim=0)           # [3H]
+        # # If biases exist:
+        # if hf_decoder_layer.self_attn.q_proj.bias is not None:
+          #   q_b = hf_decoder_layer.self_attn.q_proj.bias.data         # [H]
+          #   k_b = hf_decoder_layer.self_attn.k_proj.bias.data         # [H]
+          #   v_b = hf_decoder_layer.self_attn.v_proj.bias.data         # [H]
+          #   fused_qkv_b = torch.cat([q_b, k_b, v_b], dim=0)           # [3H]
+        # else:
+          #   fused_qkv_b = None
+
+        # Detect whether HF has a single fused "qkv_proj" or separate q_proj/k_proj/v_proj.
+        # 1a) If there is a fused qkv_proj, grab it directly:
+        if hasattr(hf_decoder_layer.self_attn, "qkv_proj"):
+          # HuggingFace fused QKV: [H, 3H]
+          fused_qkv_w = hf_decoder_layer.self_attn.qkv_proj.weight.data.clone()
+          fused_qkv_b = None
+          if hf_decoder_layer.self_attn.qkv_proj.bias is not None:
+              fused_qkv_b = hf_decoder_layer.self_attn.qkv_proj.bias.data.clone()
         else:
-            fused_qkv_b = None
+          # HF has separate q_proj, k_proj, v_proj (each [H, H]). Concatenate along dim=1.
+          q_w = hf_decoder_layer.self_attn.q_proj.weight.data      # [H, H]
+          k_w = hf_decoder_layer.self_attn.k_proj.weight.data      # [H, H]
+          v_w = hf_decoder_layer.self_attn.v_proj.weight.data      # [H, H]
+          fused_qkv_w = torch.cat([q_w, k_w, v_w], dim=1)          # [H, 3H]
+  
+          # If those separate projections have biases, concat them.
+          if (hf_decoder_layer.self_attn.q_proj.bias is not None
+              and hf_decoder_layer.self_attn.k_proj.bias is not None
+              and hf_decoder_layer.self_attn.v_proj.bias is not None):
+              q_b = hf_decoder_layer.self_attn.q_proj.bias.data    # [H]
+              k_b = hf_decoder_layer.self_attn.k_proj.bias.data    # [H]
+              v_b = hf_decoder_layer.self_attn.v_proj.bias.data    # [H]
+              fused_qkv_b = torch.cat([q_b, k_b, v_b], dim=0)      # [3H]
+          else:
+              fused_qkv_b = None  
 
         # 2) O projection weight & bias:
         o_w = hf_decoder_layer.self_attn.o_proj.weight.data           # [H, H]

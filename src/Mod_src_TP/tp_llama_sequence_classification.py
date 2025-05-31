@@ -83,7 +83,8 @@ class TPLlamaForSequenceClassification(nn.Module):
         self.config = self.hf_model.config
 
         # 2) Extract the base LlamaModel (without the classification head)
-        pretrained_base = self.hf_model.llama  # LlamaModel
+        # pretrained_base = self.hf_model.llama  # LlamaModel
+        pretrained_base = self.hf_model.model  # LlamaModel
 
         # 3) Build our TP backbone
         self.tp_backbone = TensorParallelLlamaModel(
@@ -99,10 +100,12 @@ class TPLlamaForSequenceClassification(nn.Module):
         # Copy weights & bias from HF model
         with torch.no_grad():
             self.classifier.weight.data.copy_(
-                self.hf_model.classifier.weight.data.clone()
+                # self.hf_model.classifier.weight.data.clone()
+                 self.hf_model.score.weight.data.clone()
             )
             self.classifier.bias.data.copy_(
-                self.hf_model.classifier.bias.data.clone()
+                # self.hf_model.classifier.bias.data.clone()
+                self.hf_model.score.bias.data.clone()
             )
 
         # 5) If local_rank ≠ 0, we still keep a local copy of the classifier (for gradient sync).
