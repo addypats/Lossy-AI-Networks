@@ -1,6 +1,6 @@
 # main.py - Modified for Pipeline Parallelism
 from comms import LossyNetwork
-from trainer_pipe import DistributedTrainerWithPipe, MyClassifierCallback, compute_classfication_metrics
+from trainer_pipe import DistributedTrainer, MyClassifierCallback, compute_classfication_metrics
 from data import get_dataset
 from transformers import TrainingArguments
 import os
@@ -79,7 +79,7 @@ def main(args):
         num_train_epochs=args.epochs,
         learning_rate=args.learning_rate,
         weight_decay=0.01,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
         save_strategy="steps",
@@ -94,7 +94,7 @@ def main(args):
     )
 
     # Create trainer with pipeline parallelism
-    trainer = DistributedTrainerWithPipe(
+    trainer = DistributedTrainer(
         num_nodes=args.num_nodes,  # This now represents pipeline stages
         network=network,
         model=model,
@@ -117,6 +117,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline Parallel Training with Packet Loss")
     
     # Your existing arguments
+    parser.add_argument('--local-rank', type=int, default=0, help='Local rank for distributed training')
     parser.add_argument('--num_nodes', type=int, default=2, help='Number of pipeline stages (was nodes)')
     parser.add_argument('--loss_rate', type=float, default=0.001, help='Packet loss rate')
     parser.add_argument('--seed', type=int, default=1234, help='Random seed')

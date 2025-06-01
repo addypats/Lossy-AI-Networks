@@ -190,7 +190,13 @@ class DistributedTrainer(Trainer):
         
         for i in range(self.num_nodes):
             # Apply weight loss (simulating broadcasting)
-            model.apply_weight_loss_all_stages()
+            # model.apply_weight_loss_all_stages()
+            if hasattr(model, 'module'):
+                # Model is wrapped in DDP
+                model.module.apply_weight_loss_all_stages()
+            else:
+                # Model is not wrapped in DDP
+                model.apply_weight_loss_all_stages()
             
             # Create micro-batch
             start_idx = i * minibatch_size

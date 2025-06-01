@@ -80,7 +80,7 @@ if [ "$NUM_GPUS" -gt 1 ]; then
     python -m torch.distributed.launch \
         --nproc_per_node=$NUM_GPUS \
         --master_port=29500 \
-        main.py \
+        src/src_PP/main.py \
         --num_nodes $NUM_GPUS \
         --loss_rate $LOSS_RATE \
         --dataset $DATASET \
@@ -96,7 +96,7 @@ if [ "$NUM_GPUS" -gt 1 ]; then
         "${@}"
 else
     # Single GPU fallback
-    python main.py \
+    python src/src_PP/main.py \
         --num_nodes 1 \
         --loss_rate $LOSS_RATE \
         --dataset $DATASET \
