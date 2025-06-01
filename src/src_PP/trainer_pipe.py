@@ -11,7 +11,7 @@ import math
 
 class PipelineStage(nn.Module):
     """Wrapper for pipeline stages that applies lossy network simulation"""
-    
+   
     def __init__(self, module, network, stage_id, is_last_stage=False):
         super().__init__()
         self.module = module
@@ -19,47 +19,69 @@ class PipelineStage(nn.Module):
         self.stage_id = stage_id
         self.is_last_stage = is_last_stage
         self.backup_weights = {}
-        
+        self.device = None  # Will be set when moved to device
+       
         # Store backup weights for this stage
         for name, param in self.module.named_parameters():
             self.backup_weights[name] = param.data.clone()
     
-    def forward(self, x):
-        output = self.module(x)
+    def to(self, device):
+        """Override to method to properly handle device placement"""
+        super().to(device)
+        self.device = device
+        self.module = self.module.to(device)
         
+        # Move backup weights to the same device
+        for name in self.backup_weights:
+            self.backup_weights[name] = self.backup_weights[name].to(device)
+        
+        return self
+   
+    def forward(self, x):
+        # Ensure input is on the correct device
+        if self.device is not None:
+            if isinstance(x, torch.Tensor):
+                x = x.to(self.device)
+            elif isinstance(x, dict):
+                x = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
+                     for k, v in x.items()}
+        
+        output = self.module(x)
+       
         # Apply lossy network to gradients during backward pass
         if output.requires_grad and not self.is_last_stage:
             output.register_hook(self.gradient_hook)
-            
+           
         return output
-    
+   
     def gradient_hook(self, grad):
         """Apply lossy network to gradients"""
         if grad is None:
             return grad
-            
+           
         # Apply packet loss to gradients
         mask = self.network.send(grad)
         lossy_grad = self.network.receive(grad, mask)
-        
+       
         return lossy_grad
-    
+   
     def apply_weight_loss(self):
         """Apply lossy network to weights (for broadcasting simulation)"""
         for name, param in self.module.named_parameters():
             if param.requires_grad:
                 # Store backup
                 self.backup_weights[name] = param.data.clone()
-                
+               
                 # Apply packet loss
                 mask = self.network.send(param.data)
                 param.data = self.network.receive(param.data, mask)
-    
+   
     def restore_weights(self):
         """Restore original weights from backup"""
         for name, param in self.module.named_parameters():
             if name in self.backup_weights:
                 param.data = self.backup_weights[name].clone()
+
 
 class PipelineParallelModel(nn.Module):
     """Pipeline parallel model that splits layers across devices"""
@@ -68,13 +90,16 @@ class PipelineParallelModel(nn.Module):
         super().__init__()
         self.network = network
         self.num_stages = num_stages or torch.cuda.device_count()
-        self.stages = self._split_model(base_model)
         self.devices = [f'cuda:{i}' for i in range(min(self.num_stages, torch.cuda.device_count()))]
         
-        # Move stages to devices
+        # Split model first, then move to devices
+        self.stages = self._split_model(base_model)
+        
+        # Move stages to devices AFTER creating them
         for i, stage in enumerate(self.stages):
             device_idx = i % len(self.devices)
             stage.to(self.devices[device_idx])
+            print(f"Stage {i} moved to {self.devices[device_idx]}")
     
     def _split_model(self, model):
         """Split model into pipeline stages"""
@@ -136,20 +161,49 @@ class PipelineParallelModel(nn.Module):
         
         return nn.ModuleList(stages)
     
-    def forward(self, x):
+    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
         """Forward pass through pipeline stages"""
-        current_device = x.device
-        
-        for i, stage in enumerate(self.stages):
-            # Move input to stage device
-            target_device = stage.module.device if hasattr(stage.module, 'device') else self.devices[i % len(self.devices)]
-            x = x.to(target_device)
-            
-            # Forward through stage
-            x = stage(x)
-        
-        return x
+        # Handle different input formats
+        if input_ids is not None:
+            # Standard HuggingFace format - use input_ids as the main input
+            x = input_ids
+        elif len(kwargs) == 1 and isinstance(list(kwargs.values())[0], torch.Tensor):
+            # Single tensor passed as kwarg
+            x = list(kwargs.values())[0]
+        elif isinstance(kwargs.get('inputs'), torch.Tensor):
+            # Tensor passed as 'inputs' kwarg
+            x = kwargs['inputs']
+        else:
+            # Fallback - try to find the first tensor in kwargs
+            tensor_values = [v for v in kwargs.values() if isinstance(v, torch.Tensor)]
+            if tensor_values:
+                x = tensor_values[0]
+            else:
+                raise ValueError(f"No valid tensor input found. Got: input_ids={input_ids}, kwargs keys: {list(kwargs.keys())}")
     
+        # Forward pass through pipeline stages
+        for i, stage in enumerate(self.stages):
+            # The stage will handle device placement internally
+            x = stage(x)
+            # Debug output
+            if isinstance(x, torch.Tensor):
+                print(f"After stage {i}: tensor on {x.device}")
+            # If we need to move to next stage's device for next iteration
+            # (this is handled by the next stage's forward method)
+    
+        # Return in the format expected by HuggingFace
+        # If labels were provided, this is training mode
+        if labels is not None:
+            # For training, return a dict with loss and logits
+            # You may need to compute loss here or let the trainer handle it
+            return {
+                'logits': x,
+                'labels': labels  # Pass through labels for loss computation
+            }
+        else:
+            # For inference, just return logits
+            return {'logits': x}
+
     def apply_weight_loss_all_stages(self):
         """Apply weight loss to all stages"""
         for stage in self.stages:

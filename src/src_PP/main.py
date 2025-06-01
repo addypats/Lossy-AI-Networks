@@ -54,7 +54,7 @@ def main(args):
     # Setup output directory
     output_dir = f"{args.output_dir}/{args.run_id}"
     if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
 
     # Save args for reproducibility
     with open(f"{output_dir}/args.yaml", "w") as f:
