@@ -45,7 +45,8 @@ DATASETS=("winogrande")
 FP_FLAGS=(fp16)
 
 # Ensure output directory exists
-mkdir -p output_Llama3.2-1B
+# mkdir -p output_Llama3.2-1B
+mkdir -p output_gpt2-medium
 
 for temp_flag in "${FP_FLAGS[@]}"; do
 echo
@@ -76,11 +77,35 @@ echo
         echo
 
         # Original Script
+        $TORCHRUN \
+          --nproc_per_node $tp_size \
+          --master_addr   $MASTER_ADDR \
+          --master_port   $MASTER_PORT \
+          src/pytorch_train_tp.py \
+            --tensor_parallel_size $tp_size \
+            # --model_name           "meta-llama/Llama-3.2-1B" \
+            --model_name           "gpt2-medium" \
+            --dataset              $dataset \
+            --batch_size           8 \
+            --max_length           256 \
+            --learning_rate        2e-5 \
+            --weight_decay         0.01 \
+            --loss_rate            $loss_rate \
+            --fp16                 $fp_flag \
+            --seed                 1234 \
+            --max_samples          0 \
+            --target_accuracy      0.75 \
+            --eval_steps           100 \
+            --patience             3 \
+            --max_steps            100000 \
+            --output_dir           "output_gpt2-medium/$run_id" \
+
+        # New set of parameters - mod tp script
         # $TORCHRUN \
         #   --nproc_per_node $tp_size \
         #   --master_addr   $MASTER_ADDR \
         #   --master_port   $MASTER_PORT \
-        #   src/pytorch_train_tp.py \
+        #   src/Mod_src_TP/pytorch_train_tp.py \
         #     --tensor_parallel_size $tp_size \
         #     --model_name           "meta-llama/Llama-3.2-1B" \
         #     --dataset              $dataset \
@@ -89,37 +114,14 @@ echo
         #     --learning_rate        2e-5 \
         #     --weight_decay         0.01 \
         #     --loss_rate            $loss_rate \
-        #     --fp16                 $fp_flag \
+        #     --fp16 \
         #     --seed                 1234 \
         #     --max_samples          0 \
         #     --target_accuracy      0.75 \
         #     --eval_steps           100 \
-        #     --patience             3 \
+        #     --patience             5 \
         #     --max_steps            100000 \
         #     --output_dir           "output_Llama3.2-1B/$run_id" \
-
-        # New set of parameters - mod tp script
-        $TORCHRUN \
-          --nproc_per_node $tp_size \
-          --master_addr   $MASTER_ADDR \
-          --master_port   $MASTER_PORT \
-          src/Mod_src_TP/pytorch_train_tp.py \
-            --tensor_parallel_size $tp_size \
-            --model_name           "meta-llama/Llama-3.2-1B" \
-            --dataset              $dataset \
-            --batch_size           8 \
-            --max_length           256 \
-            --learning_rate        2e-5 \
-            --weight_decay         0.01 \
-            --loss_rate            $loss_rate \
-            --fp16 \
-            --seed                 1234 \
-            --max_samples          0 \
-            --target_accuracy      0.75 \
-            --eval_steps           100 \
-            --patience             5 \
-            --max_steps            100000 \
-            --output_dir           "output_Llama3.2-1B/$run_id" \
         #    --run_name $run_id
 
         echo "=== Completed $run_id ==="
