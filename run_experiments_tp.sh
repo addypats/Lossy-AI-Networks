@@ -81,7 +81,7 @@ echo
           --nproc_per_node $tp_size \
           --master_addr   $MASTER_ADDR \
           --master_port   $MASTER_PORT \
-          src/pytorch_train_tp.py \
+          src/pytorch_train_tp_gpt.py \
             --tensor_parallel_size $tp_size \
             # --model_name           "meta-llama/Llama-3.2-1B" \
             --model_name           "gpt2-medium" \
