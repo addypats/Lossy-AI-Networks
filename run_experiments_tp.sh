@@ -9,7 +9,7 @@ source /home/ubuntu/tp-env/bin/activate
 
 
 # !–– New NCCL fixes ––!
-# export NCCL_NET_OFI_DISABLE=1
+export NCCL_NET_OFI_DISABLE=1
 export NCCL_SOCKET_IFNAME=ens5
 export NCCL_IB_DISABLE=1
 export NCCL_LAUNCH_TIMEOUT=1200
@@ -83,7 +83,6 @@ echo
           --master_port   $MASTER_PORT \
           src/pytorch_train_tp_gpt.py \
             --tensor_parallel_size $tp_size \
-            # --model_name           "meta-llama/Llama-3.2-1B" \
             --model_name           "gpt2-medium" \
             --dataset              $dataset \
             --batch_size           8 \
@@ -91,7 +90,7 @@ echo
             --learning_rate        2e-5 \
             --weight_decay         0.01 \
             --loss_rate            $loss_rate \
-            --fp16                 $fp_flag \
+            $fp_flag \
             --seed                 1234 \
             --max_samples          0 \
             --target_accuracy      0.75 \
