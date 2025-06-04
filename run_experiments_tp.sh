@@ -29,20 +29,20 @@ export MASTER_PORT=12355
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # Tensor-parallel world size
-# TP_SIZE=(2 4)
-TP_SIZE=(4)
+TP_SIZE=(2 4)
+# TP_SIZE=(4)
 
 # Loss-rate grid
-# LOSS_RATES=(0 0.001 0.005 0.01)
-LOSS_RATES=(0.001)
+LOSS_RATES=(0 0.001 0.005 0.01)
+# LOSS_RATES=(0.001)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
 DATASETS=("winogrande")
 
 # Precision Flags
-# FP_FLAGS=(fp32 fp16)
-FP_FLAGS=(fp16)
+FP_FLAGS=(fp32 fp16)
+# FP_FLAGS=(fp16)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
@@ -83,7 +83,7 @@ echo
           --master_port   $MASTER_PORT \
           src/pytorch_train_tp_gpt.py \
             --tensor_parallel_size $tp_size \
-            --model_name           "gpt2-medium" \
+            --model_name           "gpt2-large" \
             --dataset              $dataset \
             --batch_size           8 \
             --max_length           256 \
