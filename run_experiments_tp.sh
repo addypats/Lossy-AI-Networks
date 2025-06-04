@@ -33,12 +33,12 @@ TP_SIZE=(2 4)
 # TP_SIZE=(4)
 
 # Loss-rate grid
-LOSS_RATES=(0 0.001 0.005 0.01)
-# LOSS_RATES=(0.001)
+# LOSS_RATES=(0 0.001 0.005 0.01)
+LOSS_RATES=(0.001)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("hellaswag")
+DATASETS=("piqa")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
@@ -46,7 +46,7 @@ FP_FLAGS=(fp32)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-large
+mkdir -p output_gpt2-medium
 
 for temp_flag in "${FP_FLAGS[@]}"; do
 echo
@@ -71,7 +71,7 @@ echo
       echo "=== Starting with dataset ${dataset} ==="
       echo
       for loss_rate in "${LOSS_RATES[@]}"; do
-        run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8"
+        run_id="tp_gpt2-medium_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_16"
         echo
         echo "=== Starting $run_id ==="
         echo
@@ -83,11 +83,11 @@ echo
           --master_port   $MASTER_PORT \
           src/pytorch_train_tp_gpt.py \
             --tensor_parallel_size $tp_size \
-            --model_name           "gpt2-large" \
+            --model_name           "gpt2-medium" \
             --dataset              $dataset \
-            --batch_size           8 \
+            --batch_size           16 \
             --max_length           128 \
-            --learning_rate        2e-5 \
+            --learning_rate        3e-5 \
             --weight_decay         0.01 \
             --loss_rate            $loss_rate \
             $fp_flag \
@@ -95,9 +95,9 @@ echo
             --max_samples          0 \
             --target_accuracy      0.75 \
             --eval_steps           100 \
-            --patience             3 \
+            --patience             5 \
             --max_steps            100000 \
-            --output_dir           "output_gpt2-large/$run_id" \
+            --output_dir           "output_gpt2-medium/$run_id" \
 
         # New set of parameters - mod tp script
         # $TORCHRUN \
