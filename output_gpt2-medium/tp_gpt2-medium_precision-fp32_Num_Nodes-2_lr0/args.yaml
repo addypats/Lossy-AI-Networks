@@ -1,0 +1,17 @@
+batch_size: 2
+dataset: mnli
+eval_steps: 100
+fp16: false
+learning_rate: 3.0e-05
+local_rank: 0
+loss_rate: 0.0
+max_length: 128
+max_samples: 0
+max_steps: 100000
+model_name: gpt2-large
+output_dir: output_gpt2-medium/tp_gpt2-medium_precision-fp32_Num_Nodes-2_lr0
+patience: 5
+seed: 1234
+target_accuracy: 0.6
+tensor_parallel_size: 2
+weight_decay: 0.01

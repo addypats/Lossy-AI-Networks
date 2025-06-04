@@ -33,20 +33,20 @@ TP_SIZE=(2 4)
 # TP_SIZE=(4)
 
 # Loss-rate grid
-# LOSS_RATES=(0 0.001 0.005 0.01)
-LOSS_RATES=(0.001)
+LOSS_RATES=(0 0.001 0.005 0.01)
+# LOSS_RATES=(0.001)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("piqa")
+DATASETS=("mnli")
 
 # Precision Flags
-# FP_FLAGS=(fp32 fp16)
-FP_FLAGS=(fp32)
+FP_FLAGS=(fp32 fp16)
+# FP_FLAGS=(fp32)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-medium
+mkdir -p output_gpt2-medium_mnli
 
 for temp_flag in "${FP_FLAGS[@]}"; do
 echo
@@ -71,7 +71,7 @@ echo
       echo "=== Starting with dataset ${dataset} ==="
       echo
       for loss_rate in "${LOSS_RATES[@]}"; do
-        run_id="tp_gpt2-medium_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_16"
+        run_id="tp_gpt2-medium_precision-${temp_flag}_Num_Nodes-${tp_size}_lr${loss_rate}"
         echo
         echo "=== Starting $run_id ==="
         echo
@@ -83,9 +83,9 @@ echo
           --master_port   $MASTER_PORT \
           src/pytorch_train_tp_gpt.py \
             --tensor_parallel_size $tp_size \
-            --model_name           "gpt2-medium" \
+            --model_name           "gpt2-large" \
             --dataset              $dataset \
-            --batch_size           16 \
+            --batch_size           2 \
             --max_length           128 \
             --learning_rate        3e-5 \
             --weight_decay         0.01 \
