@@ -38,15 +38,15 @@ LOSS_RATES=(0 0.001 0.005 0.01)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("winogrande")
+DATASETS=("hellaswag")
 
 # Precision Flags
-FP_FLAGS=(fp32 fp16)
-# FP_FLAGS=(fp16)
+# FP_FLAGS=(fp32 fp16)
+FP_FLAGS=(fp32)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-medium
+mkdir -p output_gpt2-large
 
 for temp_flag in "${FP_FLAGS[@]}"; do
 echo
@@ -71,7 +71,7 @@ echo
       echo "=== Starting with dataset ${dataset} ==="
       echo
       for loss_rate in "${LOSS_RATES[@]}"; do
-        run_id="tp_Llama3.2-1B_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8_test_2"
+        run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_Data-${dataset}_lr${loss_rate}_batch_size_8"
         echo
         echo "=== Starting $run_id ==="
         echo
@@ -86,7 +86,7 @@ echo
             --model_name           "gpt2-large" \
             --dataset              $dataset \
             --batch_size           8 \
-            --max_length           256 \
+            --max_length           128 \
             --learning_rate        2e-5 \
             --weight_decay         0.01 \
             --loss_rate            $loss_rate \
@@ -97,7 +97,7 @@ echo
             --eval_steps           100 \
             --patience             3 \
             --max_steps            100000 \
-            --output_dir           "output_gpt2-medium/$run_id" \
+            --output_dir           "output_gpt2-large/$run_id" \
 
         # New set of parameters - mod tp script
         # $TORCHRUN \
