@@ -38,7 +38,7 @@ LOSS_RATES=(0 0.001 0.005 0.01)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("piqa")
+DATASETS=("sst2")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
@@ -46,7 +46,7 @@ FP_FLAGS=(fp32)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-large_piqa
+mkdir -p output_gpt2-large_sst2
 
 for temp_flag in "${FP_FLAGS[@]}"; do
 echo
@@ -85,7 +85,7 @@ echo
             --tensor_parallel_size $tp_size \
             --model_name           "gpt2-large" \
             --dataset              $dataset \
-            --batch_size           2 \
+            --batch_size           16 \
             --max_length           128 \
             --learning_rate        3e-5 \
             --weight_decay         0.01 \
@@ -95,9 +95,9 @@ echo
             --max_samples          0 \
             --target_accuracy      0.75 \
             --eval_steps           100 \
-            --patience             5 \
+            --patience             3 \
             --max_steps            100000 \
-            --output_dir           "output_gpt2-large_piqa/$run_id" \
+            --output_dir           "output_gpt2-large_sst2/$run_id" \
 
         # New set of parameters - mod tp script
         # $TORCHRUN \
