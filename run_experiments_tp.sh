@@ -38,7 +38,7 @@ LOSS_RATES=(0 0.001 0.005 0.01)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("mnli")
+DATASETS=("winogrande")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
@@ -46,7 +46,7 @@ FP_FLAGS=(fp16)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-medium_mnli
+mkdir -p output_gpt2-medium_winogrande
 
 for temp_flag in "${FP_FLAGS[@]}"; do
 echo
@@ -97,7 +97,7 @@ echo
             --eval_steps           100 \
             --patience             5 \
             --max_steps            100000 \
-            --output_dir           "output_gpt2-medium/$run_id" \
+            --output_dir           "output_gpt2-medium_winogrande/$run_id" \
 
         # New set of parameters - mod tp script
         # $TORCHRUN \
