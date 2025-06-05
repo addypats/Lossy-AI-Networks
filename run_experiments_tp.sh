@@ -41,8 +41,8 @@ LOSS_RATES=(0 0.001 0.005 0.01)
 DATASETS=("mnli")
 
 # Precision Flags
-FP_FLAGS=(fp32 fp16)
-# FP_FLAGS=(fp32)
+# FP_FLAGS=(fp32 fp16)
+FP_FLAGS=(fp16)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
