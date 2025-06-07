@@ -45,11 +45,11 @@ DATASETS=("winogrande")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
-FP_FLAGS=(fp16)
+FP_FLAGS=(fp32)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-large_winogrande
+mkdir -p output_gpt2-large_BurstyLosses_winogrande
 
 
 # Running script for uniform loss with loss rates like the previous ones
@@ -193,7 +193,7 @@ echo
             --eval_steps           100 \
             --patience             3 \
             --max_steps            100000 \
-            --output_dir           "output_gpt2-large_winogrande/$run_id" \
+            --output_dir           "output_gpt2-large_BurstyLosses_winogrande/$run_id" \
 
         echo "=== Completed $run_id ==="
         echo
