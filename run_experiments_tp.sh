@@ -33,7 +33,8 @@ TP_SIZE=(2 4)
 # TP_SIZE=(4)
 
 # GilbertElliot Loss Model params
-GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
+# GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
+GE_CONFIG=("default" "one")
 
 # Loss-rate grid
 LOSS_RATES=(0 0.001 0.005 0.01)
@@ -165,7 +166,7 @@ echo
       echo "=== Starting with dataset ${dataset} ==="
       echo
       for ge_config in "${GE_CONFIG[@]}"; do
-        run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config:${loss_rate}"
+        run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config:${ge_config}"
         echo
         echo "=== Starting $run_id ==="
         echo
@@ -185,7 +186,7 @@ echo
             --max_length           128 \
             --learning_rate        3e-5 \
             --weight_decay         0.01 \
-            --loss_rate            $loss_rate \
+	    --loss_rate            0.001 \
             $fp_flag \
             --seed                 1234 \
             --max_samples          0 \
