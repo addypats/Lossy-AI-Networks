@@ -29,8 +29,8 @@ export MASTER_PORT=12355
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # Tensor-parallel world size
-# TP_SIZE=(2 4)
-TP_SIZE=(4)
+TP_SIZE=(2 4)
+# TP_SIZE=(4)
 
 # Loss-rate grid
 LOSS_RATES=(0 0.001 0.005 0.01)
@@ -38,15 +38,15 @@ LOSS_RATES=(0 0.001 0.005 0.01)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("sst2")
+DATASETS=("winogrande")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
-FP_FLAGS=(fp32)
+FP_FLAGS=(fp16)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-large_sst2
+mkdir -p output_gpt2-large_winogrande
 
 for temp_flag in "${FP_FLAGS[@]}"; do
 echo
@@ -97,7 +97,7 @@ echo
             --eval_steps           100 \
             --patience             3 \
             --max_steps            100000 \
-            --output_dir           "output_gpt2-large_sst2/$run_id" \
+            --output_dir           "output_gpt2-large_winogrande/$run_id" \
 
         # New set of parameters - mod tp script
         # $TORCHRUN \
