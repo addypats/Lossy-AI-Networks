@@ -42,11 +42,11 @@ DATASETS=("winogrande")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
-FP_FLAGS=(fp16)
+FP_FLAGS=(fp32)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-large_winogrande
+mkdir -p output_gpt2-large_BurstyLosses_winogrande
 
 for temp_flag in "${FP_FLAGS[@]}"; do
 echo
@@ -83,8 +83,8 @@ echo
           --master_port   $MASTER_PORT \
           src/pytorch_train_tp_gpt.py \
             --tensor_parallel_size $tp_size \
-            --loss_type             g-e \
-            --ge_config             default \
+            --loss_type            g-e \
+            --ge_config            default \
             --model_name           "gpt2-large" \
             --dataset              $dataset \
             --batch_size           16 \
@@ -99,7 +99,7 @@ echo
             --eval_steps           100 \
             --patience             3 \
             --max_steps            100000 \
-            --output_dir           "output_gpt2-large_winogrande/$run_id" \
+            --output_dir           "output_gpt2-large_BurstyLosses_winogrande/$run_id" \
 
         # New set of parameters - mod tp script
         # $TORCHRUN \
