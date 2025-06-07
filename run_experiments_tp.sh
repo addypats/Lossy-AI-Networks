@@ -29,12 +29,13 @@ export MASTER_PORT=12355
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # Tensor-parallel world size
-TP_SIZE=(2 4)
-# TP_SIZE=(4)
+# TP_SIZE=(2 4)
+TP_SIZE=(2)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
-GE_CONFIG=("one_precent" "half_percent" "point2_percent")
+# GE_CONFIG=("one_precent" "half_percent" "point2_percent")
+GE_CONFIG=("default" "one")
 
 # Loss-rate grid
 LOSS_RATES=(0 0.001 0.005 0.01)
@@ -42,7 +43,7 @@ LOSS_RATES=(0 0.001 0.005 0.01)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("winogrande")
+DATASETS=("mnli")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)

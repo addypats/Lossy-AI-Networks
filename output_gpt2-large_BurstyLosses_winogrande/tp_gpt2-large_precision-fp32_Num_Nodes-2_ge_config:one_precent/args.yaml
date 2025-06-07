@@ -1,5 +1,5 @@
 batch_size: 16
-dataset: winogrande
+dataset: mnli
 eval_steps: 100
 fp16: false
 ge_config: one_precent
@@ -14,6 +14,6 @@ model_name: gpt2-large
 output_dir: output_gpt2-large_BurstyLosses_winogrande/tp_gpt2-large_precision-fp32_Num_Nodes-2_ge_config:one_precent
 patience: 3
 seed: 1234
-target_accuracy: 0.95
+target_accuracy: 0.6
 tensor_parallel_size: 2
 weight_decay: 0.01
