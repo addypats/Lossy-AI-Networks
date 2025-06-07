@@ -1180,7 +1180,7 @@ from torch.cuda.amp import autocast, GradScaler
 from sklearn.metrics import accuracy_score
 import wandb  # ← wandb import
 
-from comms import LossyNetwork
+from comms import LossyNetwork, GillbertElliotLossyNetwork
 from data import get_dataset
 from parallel_layers_gpt import RowParallelLinear
 
@@ -1291,7 +1291,25 @@ def train_to_accuracy(args):
 
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate,
                             weight_decay=getattr(args, 'weight_decay', 0.0))
-    network = LossyNetwork(loss_rate=args.loss_rate)
+    # network = LossyNetwork(loss_rate=args.loss_rate)
+    
+    # Custom loss rate with Bursty Losses (GilbertElliot)
+    if args.loss_type == 'ber':
+        network = LossyNetwork(args)
+    elif args.loss_type == 'g-e':
+        import pandas as pd
+        configs = pd.read_csv('g_e_params.csv')
+        ge_config = configs[configs['id'] == args.ge_config].iloc[0]
+        network = GillbertElliotLossyNetwork(
+            p_bg = ge_config[' pbg'],
+            p_gb = ge_config[' pgb'],
+            good_loss_rate = ge_config[' lrg'],
+            bad_loss_rate = ge_config[' lrb'],
+            args=args
+        )
+    else:
+        raise ValueError(f"Unsupported loss type: {args.loss_type}")
+
     network.set_seed(args.seed)
 
     best_acc, no_imp, step = 0.0, 0, 0
@@ -1368,6 +1386,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Tensor-parallel train with outputs saved")
     parser.add_argument('--local_rank', type=int, default=0)
     parser.add_argument('--max_length', type=int, default=256)
+    
+    # GilbertElliot Loss Params
+    parser.add_argument('--loss_type', type=str, default='ber', choices=['ber', 'g-e'],
+                        help='Type of packet loss simulation: "ber" for Bernoulli, "g-e" for Gilbert-Elliott')
+    parser.add_argument('--ge_config', type=str, default='default',
+                        help='Configuration ID for Gilbert-Elliott simulation (used in g_e_params.csv)')
+
     parser.add_argument('--tensor_parallel_size', type=int, default=4)
     parser.add_argument('--model_name', type=str, default='meta-llama/Llama-3.2-1B')
     parser.add_argument('--dataset', type=str, default='winogrande')
