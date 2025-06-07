@@ -83,6 +83,8 @@ echo
           --master_port   $MASTER_PORT \
           src/pytorch_train_tp_gpt.py \
             --tensor_parallel_size $tp_size \
+            --loss_type             g-e \
+            --ge_config             default \
             --model_name           "gpt2-large" \
             --dataset              $dataset \
             --batch_size           16 \
