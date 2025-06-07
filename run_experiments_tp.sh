@@ -34,7 +34,7 @@ TP_SIZE=(2 4)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
-GE_CONFIG=("default" "one")
+GE_CONFIG=("one_precent" "half_percent" "point2_percent")
 
 # Loss-rate grid
 LOSS_RATES=(0 0.001 0.005 0.01)
