@@ -23,7 +23,7 @@ source /home/ubuntu/tp-venv/bin/activate
 # Rendezvous
 
 # Force NCCL over TCP, disable IB/OFI if you don’t have EFA
-export NCCL_NET=TCP
+export NCCL_NET=Socket
 export NCCL_SOCKET_IFNAME=ens5      # ← your chosen interface
 export NCCL_IB_DISABLE=1            # disable Infiniband
 export NCCL_NET_OFI_DISABLE=1       # disable OFI
@@ -46,12 +46,12 @@ export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12355
 
 # GPUs to use
-# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export CUDA_VISIBLE_DEVICES=4,5
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# export CUDA_VISIBLE_DEVICES=4,5
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4)
-TP_SIZE=(2)
+TP_SIZE=(8)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
