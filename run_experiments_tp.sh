@@ -29,13 +29,13 @@ export MASTER_PORT=12355
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # Tensor-parallel world size
-# TP_SIZE=(2 4)
-TP_SIZE=(4)
+TP_SIZE=(2 4)
+# TP_SIZE=(2)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
-# GE_CONFIG=("one_precent" "half_percent" "point2_percent")
-GE_CONFIG=("default" "one")
+GE_CONFIG=("one_precent" "half_percent" "point2_percent")
+# GE_CONFIG=("default" "one")
 # GE_CONFIG=("default" "one_precent" "half_percent")
 
 # Loss-rate grid
@@ -52,7 +52,7 @@ FP_FLAGS=(fp32)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-large_BurstyLosses_winogrande
+mkdir -p output_gpt2-large_BurstyLosses_mnli
 
 
 # Running script for uniform loss with loss rates like the previous ones
@@ -193,10 +193,10 @@ echo
             --seed                 1234 \
             --max_samples          0 \
             --target_accuracy      0.75 \
-            --eval_steps           100 \
+            --eval_steps           20 \
             --patience             3 \
             --max_steps            100000 \
-            --output_dir           "output_gpt2-large_BurstyLosses_winogrande/$run_id" \
+            --output_dir           "output_gpt2-large_BurstyLosses_mnli/$run_id" \
 
         echo "=== Completed $run_id ==="
         echo

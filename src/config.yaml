@@ -26,4 +26,4 @@ piqa:
 mnli:
   num_labels: 3
   report_ttac: [0.4, 0.5, 0.6]
-  target_acc: 0.85
+  target_acc: 0.75
