@@ -117,7 +117,7 @@ echo
             --ge_config             default \
             --model_name           "gpt2-large" \
             --dataset              $dataset \
-            --batch_size           16 \
+            --batch_size           8 \
             --max_length           128 \
             --learning_rate        3e-5 \
             --weight_decay         0.01 \
@@ -126,7 +126,7 @@ echo
             --seed                 1234 \
             --max_samples          0 \
             --target_accuracy      0.75 \
-            --eval_steps           100 \
+            --eval_steps           20 \
             --patience             3 \
             --max_steps            100000 \
             --output_dir           "output_gpt2-large_uniform_Bernoulli_Losses_mnli/$run_id" \
@@ -228,3 +228,4 @@ done
 # done
 
 echo "All tensor-parallel runs done."
+
