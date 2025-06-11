@@ -1,7 +1,11 @@
 #!/bin/bash
 # Launch 4 ranks for tensor parallelism (one per GPU)
 
-source /home/ubuntu/tp-env/bin/activate
+# This is for the 4 GPU instnace machine
+# source /home/ubuntu/tp-env/bin/activate
+
+# This is for the 4 GPU instnace machine
+source /home/ubuntu/tp-venv/bin/activate
 
 # # NCCL tuning
 # export NCCL_DEBUG=WARN
@@ -11,11 +15,34 @@ source /home/ubuntu/tp-env/bin/activate
 # !–– New NCCL fixes ––!
 export NCCL_NET_OFI_DISABLE=1
 export NCCL_SOCKET_IFNAME=ens5
-export NCCL_IB_DISABLE=1
+# export NCCL_IB_DISABLE=1
 export NCCL_LAUNCH_TIMEOUT=1200
 export NCCL_TIMEOUT=1200
 
-export NCCL_DEBUG=WARN
+# New things?
+export NCCL_NET=Socket
+export NCCL_DEBUG=INFO
+export NCCL_DEBUG_SUBSYS=INIT
+
+export NCCL_P2P_DISABLE=0
+
+export FI_PROVIDER=tcp
+export FI_EFA_ENABLE_SHM_TRANSFER=0
+
+# Add these to your existing NCCL configuration
+export NCCL_TREE_THRESHOLD=0
+export NCCL_ALGO=Tree
+export NCCL_PROTO=Simple
+export NCCL_MIN_NRINGS=8
+export NCCL_MAX_NRINGS=8
+
+export NCCL_MIN_CTAS=1
+export NCCL_MAX_CTAS=1
+export NCCL_SHM_USE_CUDA_MEMCPY=1
+
+
+
+# export NCCL_DEBUG=WARN
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 
 # Torchrun binary
@@ -26,11 +53,12 @@ export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12355
 
 # GPUs to use
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=4,5
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4)
-TP_SIZE=(8)
+TP_SIZE=(2)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
@@ -184,7 +212,7 @@ echo
             --ge_config            $ge_config \
             --model_name           "gpt2-large" \
             --dataset              $dataset \
-            --batch_size           16 \
+            --batch_size           8 \
             --max_length           128 \
             --learning_rate        3e-5 \
             --weight_decay         0.01 \
