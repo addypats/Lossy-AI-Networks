@@ -34,7 +34,7 @@ export NCCL_DEBUG=INFO
 export NCCL_DEBUG_SUBSYS=ALL
 
 # Just wandb things
-export WANDB_MODE=disabled
+# gxport WANDB_MODE=disabled
 
 
 # export NCCL_DEBUG=WARN
@@ -81,7 +81,7 @@ ITERATIONS=(1 2)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-large_BurstyLosses_mnli
+mkdir -p output_gpt2-large_uniform_Bernoulli_Losses_mnli
 
 
 # Running script for uniform loss with loss rates like the previous ones - used for bernoulli' (The standard loss rate function)
