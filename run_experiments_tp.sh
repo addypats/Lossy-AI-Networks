@@ -58,7 +58,8 @@ TP_SIZE=(8)
 # GE_CONFIG=("one_precent" "half_percent" "point2_percent")
 # GE_CONFIG=("default" "one")
 # GE_CONFIG=("default" "one_precent" "half_percent")
-GE_CONFIG=("short_1percent", "short_half_percent", "short_point2_percent")
+# GE_CONFIG=("short_1percent" "short_half_percent" "short_point_2percent")
+GE_CONFIG=("short_point_2percent")
 
 # Loss-rate grid
 LOSS_RATES=(0 0.001 0.005 0.01)
@@ -197,7 +198,7 @@ echo
       echo "=== Starting with dataset ${dataset} ==="
       echo
       for ge_config in "${GE_CONFIG[@]}"; do
-        run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}_Iteration_${iter}"
+        run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}"
         echo
         echo "=== Starting $run_id ==="
         echo
@@ -237,4 +238,5 @@ done
 # done
 
 echo "All tensor-parallel runs done."
+
 
