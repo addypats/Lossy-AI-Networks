@@ -33,6 +33,8 @@ export NCCL_P2P_LEVEL=SYS           # prefer system-level P2P
 export NCCL_DEBUG=INFO
 export NCCL_DEBUG_SUBSYS=ALL
 
+# Just wandb things
+export WANDB_MODE=disabled
 
 
 # export NCCL_DEBUG=WARN
@@ -75,7 +77,7 @@ FP_FLAGS=(fp32)
 
 # To run the number of iterations
 # ITERATIONS=(1 2 3 4 5)
-ITERATION=(1 2)
+ITERATIONS=(1 2)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
