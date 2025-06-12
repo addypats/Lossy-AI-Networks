@@ -77,11 +77,11 @@ FP_FLAGS=(fp32)
 
 # To run the number of iterations
 # ITERATIONS=(1 2 3 4 5)
-ITERATIONS=(1 2)
+ITERATIONS=(1)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-large_uniform_Bernoulli_Losses_mnli
+mkdir -p output_gpt2-large_BurstyLosses_mnli
 
 
 # Running script for uniform loss with loss rates like the previous ones - used for bernoulli' (The standard loss rate function)
@@ -231,7 +231,7 @@ for iter in "${ITERATIONS[@]}"; do
               --max_samples          0 \
               --target_accuracy      0.75 \
               --eval_steps           20 \
-              --patience             5 \
+              --patience             10 \
               --max_steps            100000 \
               --output_dir           "output_gpt2-large_BurstyLosses_mnli/$run_id" \
 
