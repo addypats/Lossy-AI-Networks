@@ -73,7 +73,7 @@ DATASETS=("mnli")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
-FP_FLAGS=(fp32)
+FP_FLAGS=(fp16)
 
 # To run the number of iterations
 # ITERATIONS=(1 2 3 4 5)
