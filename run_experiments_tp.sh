@@ -5,7 +5,7 @@
 # source /home/ubuntu/tp-env/bin/activate
 
 # This is for the 4 GPU instnace machine
-source /home/ubuntu/tp-venv/bin/activate
+# source /home/ubuntu/tp-venv/bin/activate
 
 # # NCCL tuning
 # export NCCL_DEBUG=WARN
@@ -48,20 +48,20 @@ export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12355
 
 # GPUs to use
-# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export CUDA_VISIBLE_DEVICES=1,2
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# export CUDA_VISIBLE_DEVICES=1,2
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4)
-TP_SIZE=(2)
+TP_SIZE=(8)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
-# GE_CONFIG=("one_precent" "half_percent" "point2_percent")
+GE_CONFIG=("one_precent" "half_percent" "point2_percent")
 # GE_CONFIG=("default" "one")
 # GE_CONFIG=("default" "one_precent" "half_percent")
 # GE_CONFIG=("short_1percent" "short_half_percent" "short_point_2percent")
-GE_CONFIG=("point2_percent")
+# GE_CONFIG=("point2_percent")
 
 # Loss-rate grid
 LOSS_RATES=(0 0.001 0.005 0.01)
