@@ -139,7 +139,7 @@ for iter in "${ITERATIONS[@]}"; do
               --max_samples          0 \
               --target_accuracy      0.75 \
               --eval_steps           20 \
-              --patience             3 \
+              --patience             10 \
               --max_steps            100000 \
               --output_dir           "output_gpt2-large_uniform_Bernoulli_Losses_mnli/$run_id" \
 
