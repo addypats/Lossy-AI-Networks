@@ -53,7 +53,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4)
-TP_SIZE=(8)
+TP_SIZE=(2)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
