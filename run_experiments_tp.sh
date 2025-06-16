@@ -48,12 +48,12 @@ export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12355
 
 # GPUs to use
-# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export CUDA_VISIBLE_DEVICES=1,2
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# export CUDA_VISIBLE_DEVICES=1,2
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4)
-TP_SIZE=(2)
+TP_SIZE=(8)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
@@ -64,8 +64,8 @@ TP_SIZE=(2)
 # GE_CONFIG=("point2_percent")
 
 # Loss-rate grid
-LOSS_RATES=(0 0.001 0.005 0.01)
-# LOSS_RATES=(0.005 0.01)
+# LOSS_RATES=(0 0.001 0.005 0.01)
+LOSS_RATES=(0.002)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
@@ -73,7 +73,7 @@ DATASETS=("mnli")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
-FP_FLAGS=(fp16)
+FP_FLAGS=(fp32)
 
 # To run the number of iterations
 # ITERATIONS=(1 2 3 4 5)
@@ -113,7 +113,7 @@ for iter in "${ITERATIONS[@]}"; do
         echo "=== Starting with dataset ${dataset} ==="
         echo
         for loss_rate in "${LOSS_RATES[@]}"; do
-          run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_lr${loss_rate}"
+          run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_lr${loss_rate}_Iteration_${iter}"
           echo
           echo "=== Starting $run_id ==="
           echo
