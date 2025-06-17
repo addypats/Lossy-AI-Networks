@@ -61,7 +61,7 @@ TP_SIZE=(8)
 # GE_CONFIG=("default" "one")
 # GE_CONFIG=("default" "one_precent" "half_percent")
 # GE_CONFIG=("short_1percent" "short_half_percent" "short_point_2percent")
-GE_CONFIG=("long_point1_percent")
+GE_CONFIG=("short_point1_percent")
 
 # Loss-rate grid
 # LOSS_RATES=(0 0.001 0.005 0.01)
@@ -205,7 +205,7 @@ for iter in "${ITERATIONS[@]}"; do
         echo "=== Starting with dataset ${dataset} ==="
         echo
         for ge_config in "${GE_CONFIG[@]}"; do
-          run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}_Long_Burst_Loss_Iteration_${iter}"
+          run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}_Short_Burst_Loss_Iteration_${iter}"
           echo
           echo "=== Starting $run_id ==="
           echo
