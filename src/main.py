@@ -207,7 +207,7 @@ def main(args):
         num_train_epochs=args.epochs,
         learning_rate= args.learning_rate,
         weight_decay=0.01,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
         save_strategy="steps",

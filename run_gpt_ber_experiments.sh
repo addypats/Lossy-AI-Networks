@@ -43,8 +43,9 @@ for loss_rate in "${LOSS_RATES[@]}"; do
         --model_name "$MODEL" \
         --dataset "$DATASET" \
         --loss_rate "$loss_rate" \
+	--fp16 \
         --num_nodes "$nodes" \
-        --batch_size $((16 * ${nodes})) \
+	--batch_size $((2 * ${nodes})) \
         --learning_rate 2e-5 \
         --run_id "$run_id" \
         --epochs 7 \
