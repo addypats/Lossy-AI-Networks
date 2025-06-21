@@ -77,7 +77,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
             --dataset "$DATASET" \
             --loss_rate "$loss_rate" \
             --num_nodes "$nodes" \
-            --batch_size 2 \
+            --batch_size $((16 * ${nodes})) \
             --learning_rate 2e-5 \
             --run_id "$run_id" \
             --epochs 7 \
