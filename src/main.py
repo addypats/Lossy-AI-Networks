@@ -341,8 +341,10 @@ def main(args):
         per_device_eval_batch_size=args.batch_size,
         num_train_epochs=args.epochs,
         learning_rate=args.learning_rate,
+        remove_unused_columns=False,
+        optim="adamw_bnb_8bit",
         weight_decay=0.01,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
         save_strategy="steps",
@@ -350,7 +352,8 @@ def main(args):
         metric_for_best_model="accuracy" if args.dataset in classification_datasets else "exact_match",
         logging_dir=f"{output_dir}/logs",
         logging_steps=10,
-        fp16=args.fp16,
+        # fp16=args.fp16,
+        fp16=True,
         report_to="wandb"
     )
 

@@ -333,15 +333,26 @@ class PacketLossWrapper(torch.nn.Module):
         self.model = model
         self.network = network
 
-    def forward(self, **inputs):
-        # Simulate packet loss for weights
+    #def forward(self, **inputs):
+    #    # Simulate packet loss for weights
+    #    with torch.no_grad():
+    #        for name, param in self.model.named_parameters():
+    #            if param.requires_grad:
+    #                mask = self.network.send(param.data)
+    #                param.data = self.network.receive(param.data, mask)
+
+    #    return self.model(**inputs)
+
+    def forward(self, *args, **kwargs):
         with torch.no_grad():
             for name, param in self.model.named_parameters():
                 if param.requires_grad:
                     mask = self.network.send(param.data)
                     param.data = self.network.receive(param.data, mask)
 
-        return self.model(**inputs)
+        # The Trainer sometimes injects num_items_in_batch—drop it
+        kwargs.pop("num_items_in_batch", None)
+        return self.model(*args, **kwargs)
 
 def compute_exact_match_metric(tokenizer):
     def compute_metrics(eval_pred):

@@ -1,6 +1,6 @@
 #!/bin/bash
-#MODEL="meta-llama/Llama-3.2-1B"
-MODEL="openai-community/gpt2-large"
+MODEL="meta-llama/Llama-3.2-1B"
+# MODEL="openai-community/gpt2-large"
 MODEL_ALIAS="gpt2-large"
 DATASET="mnli"
 
@@ -69,7 +69,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
       echo "Starting experiment: $run_id"
       # Run the experiment
       $TORCHRUN \
-        --nproc_per_node $tp_size \
+        --nproc_per_node $nodes \
         --master_addr   $MASTER_ADDR \
         --master_port   $MASTER_PORT \
          src/main.py \
@@ -77,7 +77,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
             --dataset "$DATASET" \
             --loss_rate "$loss_rate" \
             --num_nodes "$nodes" \
-            --batch_size $((16 * ${nodes})) \
+            --batch_size 2 \
             --learning_rate 2e-5 \
             --run_id "$run_id" \
             --epochs 7 \

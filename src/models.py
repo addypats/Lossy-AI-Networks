@@ -23,7 +23,7 @@ def get_classifier_and_tokenizer(model_name, num_labels=2, num_unfrozen_layers=N
     """
     Load the model and tokenizer from Hugging Face Hub.
     """
-    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels, load_in_8bit=True, device_map="auto")
 
     if num_unfrozen_layers is not None:
         for param in model.parameters():
@@ -45,7 +45,7 @@ def get_classifier_and_tokenizer(model_name, num_labels=2, num_unfrozen_layers=N
 
 def get_qa_model_and_tokenizer(model_name, num_unfrozen_layers=None):
 
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name, load_in_8bit=True, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.add_special_tokens({'pad_token': '|<pad>|'})
