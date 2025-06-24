@@ -1314,6 +1314,7 @@ def train_to_accuracy(args):
     network.set_seed(args.seed)
 
     best_acc, no_imp, step = 0.0, 0, 0
+    target_hit_counter = 0  # count how many times accuracy exceeds target
     start = time.time()
 
     while step < args.max_steps:
@@ -1352,8 +1353,19 @@ def train_to_accuracy(args):
                     wandb.log({'accuracy': acc, 'step': step, 'time': elapsed})
 
                     if acc >= args.target_accuracy:
-                        torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pt"))
-                        stop_signal.fill_(1)
+                        
+                        # Original code
+                        # torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pt"))
+                        # stop_signal.fill_(1)
+                        
+                        # New code for counting the acc 5 times
+                        target_hit_counter += 1
+                        print(f"Target accuracy hit {target_hit_counter} time(s).")
+                        torch.save(model.state_dict(), os.path.join(args.output_dir, f"model_hit_{target_hit_counter}.pt"))
+
+                        if target_hit_counter >= 5:
+                            print(f"Target accuracy hit 5 times. Stopping training.")
+                            stop_signal.fill_(1)
                     elif acc > best_acc:
                         best_acc, no_imp = acc, 0
                         torch.save(model.state_dict(), os.path.join(args.output_dir, "model_best.pt"))
