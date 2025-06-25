@@ -1314,7 +1314,8 @@ def train_to_accuracy(args):
     network.set_seed(args.seed)
 
     best_acc, no_imp, step = 0.0, 0, 0
-    target_hit_counter = 0  # count how many times accuracy exceeds target
+    # target_hit_counter = 0  # count how many times accuracy exceeds target
+    last_accuracies = []  # For tracking the last 5 evaluation accuracies
     start = time.time()
 
     while step < args.max_steps:
@@ -1351,21 +1352,48 @@ def train_to_accuracy(args):
                     log_f.flush()
                     metrics.append({'step': step, 'accuracy': acc, 'time': elapsed})
                     wandb.log({'accuracy': acc, 'step': step, 'time': elapsed})
+                    
+                    # Update list of last 5 accuracies
+                    last_accuracies.append(acc)
+                    if len(last_accuracies) > 5:
+                        last_accuracies.pop(0)
 
-                    if acc >= args.target_accuracy:
-                        
-                        # Original code
-                        # torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pt"))
-                        # stop_signal.fill_(1)
-                        
-                        # New code for counting the acc 5 times
-                        target_hit_counter += 1
-                        print(f"Target accuracy hit {target_hit_counter} time(s).")
-                        torch.save(model.state_dict(), os.path.join(args.output_dir, f"model_hit_{target_hit_counter}.pt"))
+                    # Compute running average
+                    avg_acc = sum(last_accuracies) / len(last_accuracies)
+                    print(f"Last {len(last_accuracies)} accuracies: {last_accuracies} | Running Avg: {avg_acc:.4f}")
 
-                        if target_hit_counter >= 5:
-                            print(f"Target accuracy hit 5 times. Stopping training.")
-                            stop_signal.fill_(1)
+
+                    # Original code for hit rate to 5 accuracies.
+                    
+                    # if acc >= args.target_accuracy:
+                        
+                    #     # Original code
+                    #     # torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pt"))
+                    #     # stop_signal.fill_(1)
+                        
+                    #     # New code for counting the acc 5 times
+                    #     target_hit_counter += 1
+                    #     print(f"Target accuracy hit {target_hit_counter} time(s).")
+                    #     torch.save(model.state_dict(), os.path.join(args.output_dir, f"model_hit_{target_hit_counter}.pt"))
+
+                    #     if target_hit_counter >= 5:
+                    #         print(f"Target accuracy hit 5 times. Stopping training.")
+                    #         stop_signal.fill_(1)
+                    # elif acc > best_acc:
+                    #     best_acc, no_imp = acc, 0
+                    #     torch.save(model.state_dict(), os.path.join(args.output_dir, "model_best.pt"))
+                    # else:
+                    #     no_imp += 1
+                    #     if no_imp >= args.patience:
+                    #         stop_signal.fill_(1)
+                    
+                    # Stop if running average >= target
+                    if len(last_accuracies) == 5 and avg_acc >= args.target_accuracy:
+                        print(f"Running average of last 5 evaluations reached target accuracy {args.target_accuracy}. Stopping.")
+                        torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pt"))
+                        stop_signal.fill_(1)
+
+                    # Otherwise, track best single accuracy for saving purposes
                     elif acc > best_acc:
                         best_acc, no_imp = acc, 0
                         torch.save(model.state_dict(), os.path.join(args.output_dir, "model_best.pt"))
