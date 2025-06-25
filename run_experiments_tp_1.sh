@@ -45,16 +45,16 @@ TORCHRUN=$(which torchrun)
 
 # Rendezvous settings
 export MASTER_ADDR=127.0.0.1
-export MASTER_PORT=12355
+export MASTER_PORT=12356
 
 # GPUs to use
 # export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export CUDA_VISIBLE_DEVICES=0,1,2,3
-# export CUDA_VISIBLE_DEVICES=1,2
+# export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=4,5
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4 8)
-TP_SIZE=(4)
+TP_SIZE=(2)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
