@@ -54,16 +54,16 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4 8)
-TP_SIZE=(4)
+TP_SIZE=(8)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
 # GE_CONFIG=("one_precent" "half_percent" "point2_percent" "long_point1_percent")
 # GE_CONFIG=("one_precent" "half_percent" "point2_percent")
 # GE_CONFIG=("default" "one_precent" "half_percent")
-GE_CONFIG=("short_1percent" "short_half_percent" "short_point_2percent" "short_point1_percent")
+# GE_CONFIG=("short_1percent" "short_half_percent" "short_point_2percent" "short_point1_percent")
 # GE_CONFIG=("long_point1_percent")
-# GE_CONFIG=("short_point_2percent" "short_point1_percent")
+GE_CONFIG=("zero" "short_1percent" "short_2percent")
 
 # Loss-rate grid
 LOSS_RATES=(0.001 0.002 0.005 0.01)
