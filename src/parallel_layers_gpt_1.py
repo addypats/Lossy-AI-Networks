@@ -480,9 +480,10 @@ def parallelize_gpt2(model, world_size=None, group=None):
             block.mlp.c_proj = RowParallelLinear(orig_fc_proj, world_size, group)
 
     # Final LM head
-    try:
-        model.lm_head = RowParallelLinear(model.lm_head, world_size, group)
-    except AssertionError:
-        if dist.get_rank(group) == 0:
-            print("⚠️ lm_head output_features not divisible; using replicated head")
+    if hasattr(model, 'lm_head'):
+        try:
+            model.lm_head = RowParallelLinear(model.lm_head, world_size, group)
+        except AssertionError:
+            if dist.get_rank(group) == 0:
+                print("⚠️ lm_head output_features not divisible; using replicated head")
     return model
