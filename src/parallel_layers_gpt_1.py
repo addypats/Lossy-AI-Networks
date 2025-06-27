@@ -315,11 +315,20 @@ class ColumnParallelLinear(nn.Module):
         self.weight.data.copy_(weight_shards[rank])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [batch, in_features]
-        rank = dist.get_rank(group=self.group)
-        start = rank * self.local_in
-        end = start + self.local_in
-        x_shard = x[:, start:end]
+        # # x: [batch, in_features]
+        # rank = dist.get_rank(group=self.group)
+        # start = rank * self.local_in
+        # end = start + self.local_in
+        # x_shard = x[:, start:end]
+        
+        # x: [..., in_features]
+        rank   = dist.get_rank(group=self.group)
+        start  = rank * self.local_in
+        end    = start + self.local_in
+        # slice the last dimension (features), so it works for 2D or 3D inputs
+        x_shard = x[..., start:end]
+        
+        
         local_out = F.linear(x_shard, self.weight, bias=None)
 
         # all-reduce partial outputs
