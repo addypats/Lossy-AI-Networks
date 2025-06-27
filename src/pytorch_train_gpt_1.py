@@ -109,8 +109,13 @@ def train_to_accuracy(args):
         model.config.pad_token_id = tokenizer.pad_token_id
         model.resize_token_embeddings(len(tokenizer))
 
-    # Apply Megatron-style tensor parallelism
-    parallelize_gpt2(model, world_size=world_size, group=group)
+    # # Apply Megatron-style tensor parallelism
+    # parallelize_gpt2(model, world_size=world_size, group=group)
+    # model.to(torch.cuda.current_device())
+
+    # Apply Megatron-style tensor parallelism to the GPT-2 backbone
+    # For HF SequenceClassification, the core GPT2Model lives in model.transformer
+    parallelize_gpt2(model.transformer, world_size=world_size, group=group)
     model.to(torch.cuda.current_device())
 
     # Prepare datasets and loaders

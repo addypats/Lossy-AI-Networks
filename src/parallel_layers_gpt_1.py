@@ -141,7 +141,14 @@ def parallelize_gpt2(model, world_size=None, group=None):
     if group is None:
         group = dist.group.WORLD
     # 1) Replace token embeddings
-    model.wte = VocabParallelEmbedding(model.wte, world_size, group)
+    try:
+        model.wte = VocabParallelEmbedding(model.wte, world_size, group)
+    except AssertionError:
+        # vocab_size % world_size != 0 → fall back to full embedding
+        # all ranks keep model.wte as-is (replicated)
+        if dist.get_rank(group) == 0:
+            print("⚠️ vocab_size not divisible by world_size; using replicated embeddings")
+
     # 2) Transformer blocks
     for block in model.h:
         # QKV combined projection: c_attn -> three columns

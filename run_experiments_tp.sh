@@ -63,7 +63,7 @@ TP_SIZE=(8)
 # GE_CONFIG=("default" "one_precent" "half_percent")
 # GE_CONFIG=("short_1percent" "short_half_percent" "short_point_2percent" "short_point1_percent")
 # GE_CONFIG=("long_point1_percent")
-GE_CONFIG=("zero" "short_1percent" "short_2percent")
+GE_CONFIG=("zero" "ber_0" "ber_90" "90_loss")
 
 # Loss-rate grid
 LOSS_RATES=(0.001 0.002 0.005 0.01)
@@ -79,7 +79,7 @@ FP_FLAGS=(fp32)
 
 # To run the number of iterations
 # ITERATIONS=(1 2 3 4 5)
-ITERATIONS=(1 2)
+ITERATIONS=(1)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B

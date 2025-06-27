@@ -218,7 +218,7 @@ for iter in "${ITERATIONS[@]}"; do
             --nproc_per_node $tp_size \
             --master_addr   $MASTER_ADDR \
             --master_port   $MASTER_PORT \
-            src/pytorch_train_tp_gpt_1.py \
+            src/pytorch_train_gpt_1.py \
               --tensor_parallel_size $tp_size \
               --loss_type            g-e \
               --ge_config            $ge_config \
