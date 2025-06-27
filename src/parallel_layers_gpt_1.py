@@ -415,75 +415,56 @@ def parallelize_gpt2(model, world_size=None, group=None):
     if group is None:
         group = dist.group.WORLD
 
-    # Token embeddings
+    # Embedding fallback
     try:
         model.wte = VocabParallelEmbedding(model.wte, world_size, group)
     except AssertionError:
         if dist.get_rank(group) == 0:
             print("⚠️ vocab_size not divisible by world_size; using replicated embeddings")
 
-    # Transformer blocks
     for block in model.h:
-        # QKV projection (Conv1D)
-        orig_qkv = block.attn.c_attn
-        w, b = orig_qkv.weight.data, orig_qkv.bias.data
+        # handle QKV splitting
+        orig = block.attn.c_attn
+        w, b = orig.weight.data, orig.bias.data
         in_dim, out_dim = w.shape
         hidden = out_dim // 3
 
-        def make_shard(start, end):
-            lin = nn.Linear(in_dim, end - start, bias=True).to(w.device)
-            lin.weight.data.copy_(w[:, start:end].T)
-            lin.bias.data.copy_(b[start:end])
-            return lin
+        # create sharded linear layers
+        q_lin = nn.Linear(in_dim, hidden, bias=True).to(w.device)
+        k_lin = nn.Linear(in_dim, hidden, bias=True).to(w.device)
+        v_lin = nn.Linear(in_dim, hidden, bias=True).to(w.device)
+        q_lin.weight.data.copy_(w[:, :hidden].T); q_lin.bias.data.copy_(b[:hidden])
+        k_lin.weight.data.copy_(w[:, hidden:2*hidden].T); k_lin.bias.data.copy_(b[hidden:2*hidden])
+        v_lin.weight.data.copy_(w[:, 2*hidden:].T); v_lin.bias.data.copy_(b[2*hidden:])
 
-        q_lin = make_shard(0, hidden)
-        k_lin = make_shard(hidden, 2*hidden)
-        v_lin = make_shard(2*hidden, 3*hidden)
-
+        # wrap with column parallel
         block.attn.q_proj = ColumnParallelLinear(q_lin, world_size, group)
         block.attn.k_proj = ColumnParallelLinear(k_lin, world_size, group)
         block.attn.v_proj = ColumnParallelLinear(v_lin, world_size, group)
-        del block.attn.c_attn
 
-        # Output projection (Conv1D)
-        orig_proj = block.attn.c_proj
-        w2, b2 = orig_proj.weight.data, orig_proj.bias.data
-        in2, out2 = w2.shape
-        lin2 = nn.Linear(in2, out2, bias=True).to(w2.device)
-        lin2.weight.data.copy_(w2.T)
-        lin2.bias.data.copy_(b2)
+        # define fused c_attn to satisfy forward
+        def fused_c_attn(x, q=block.attn.q_proj, k=block.attn.k_proj, v=block.attn.v_proj):
+            return torch.cat([q(x), k(x), v(x)], dim=-1)
+        block.attn.c_attn = fused_c_attn
+        block.attn.split_size = hidden
+
+        # output projection
+        orig_p = block.attn.c_proj
+        w2, b2 = orig_p.weight.data, orig_p.bias.data
+        lin2 = nn.Linear(w2.shape[1], w2.shape[0], bias=True).to(w2.device)
+        lin2.weight.data.copy_(w2.T); lin2.bias.data.copy_(b2)
         block.attn.c_proj = RowParallelLinear(lin2, world_size, group)
 
-                # MLP layers
-        # c_fc (up projection)
-        orig_fc = block.mlp.c_fc
-        if isinstance(orig_fc, Conv1D):
-            w3, b3 = orig_fc.weight.data, orig_fc.bias.data
-            in3, out3 = w3.shape
-            lin3 = nn.Linear(in3, out3, bias=True).to(w3.device)
-            lin3.weight.data.copy_(w3.T)
-            lin3.bias.data.copy_(b3)
-            block.mlp.c_fc = ColumnParallelLinear(lin3, world_size, group)
-        else:
-            block.mlp.c_fc = ColumnParallelLinear(orig_fc, world_size, group)
+        # MLP layers
+        for name, attr in [('c_fc', ColumnParallelLinear), ('c_proj', RowParallelLinear)]:
+            orig_m = getattr(block.mlp, name)
+            if isinstance(orig_m, Conv1D):
+                w3, b3 = orig_m.weight.data, orig_m.bias.data
+                lin3 = nn.Linear(w3.shape[1], w3.shape[0], bias=True).to(w3.device)
+                lin3.weight.data.copy_(w3.T); lin3.bias.data.copy_(b3)
+                setattr(block.mlp, name, attr(lin3, world_size, group))
+            else:
+                setattr(block.mlp, name, attr(orig_m, world_size, group))
 
-        # c_proj (down projection)
-        orig_fc_proj = block.mlp.c_proj
-        if isinstance(orig_fc_proj, Conv1D):
-            w4, b4 = orig_fc_proj.weight.data, orig_fc_proj.bias.data
-            in4, out4 = w4.shape
-            lin4 = nn.Linear(in4, out4, bias=True).to(w4.device)
-            lin4.weight.data.copy_(w4.T)
-            lin4.bias.data.copy_(b4)
-            block.mlp.c_proj = RowParallelLinear(lin4, world_size, group)
-        else:
-            block.mlp.c_proj = RowParallelLinear(orig_fc_proj, world_size, group)
-
-    # Final LM head
-    if hasattr(model, 'lm_head'):
-        try:
-            model.lm_head = RowParallelLinear(model.lm_head, world_size, group)
-        except AssertionError:
-            if dist.get_rank(group) == 0:
-                print("⚠️ lm_head output_features not divisible; using replicated head")
+    # no lm_head on model.transformer
     return model
