@@ -230,6 +230,59 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from transformers.models.gpt2.modeling_gpt2 import Conv1D
 
+# class ColumnParallelLinear(nn.Module):
+#     """
+#     Splits an nn.Linear's input dimension across world_size GPUs.
+#     Each rank holds a contiguous shard of the columns of weight.
+#     """
+#     def __init__(self, orig_linear: nn.Linear, world_size: int, group: dist.ProcessGroup):
+#         super().__init__()
+#         self.group = group
+#         self.world_size = world_size
+
+#         in_features = orig_linear.in_features
+#         out_features = orig_linear.out_features
+#         assert in_features % world_size == 0, "in_features must be divisible by world_size"
+#         self.local_in = in_features // world_size
+
+#         # allocate local weight shard
+#         self.weight = nn.Parameter(
+#             torch.empty(out_features, self.local_in, device=torch.cuda.current_device())
+#         )
+
+#         # handle bias properly
+#         if orig_linear.bias is not None:
+#             self.bias = nn.Parameter(
+#                 torch.empty(out_features, device=torch.cuda.current_device())
+#             )
+#         else:
+#             self.bias = None
+
+#         # split pretrained weight into input shards
+#         weight_shards = orig_linear.weight.data.chunk(world_size, dim=1)
+#         rank = dist.get_rank(group=self.group)
+#         self.weight.data.copy_(weight_shards[rank])
+
+#         # split pretrained bias if exists
+#         if orig_linear.bias is not None:
+#             bias_shards = orig_linear.bias.data.chunk(world_size, dim=0)
+#             self.bias.data.copy_(bias_shards[rank])
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         # x: [batch, in_features]
+#         # slice local columns
+#         rank = dist.get_rank(group=self.group)
+#         start = rank * self.local_in
+#         end = start + self.local_in
+#         x_shard = x[:, start:end]
+#         local_out = F.linear(x_shard, self.weight, None)
+
+#         # all-reduce partial outputs
+#         dist.all_reduce(local_out, group=self.group)
+#         if self.bias is not None:
+#             local_out = local_out + self.bias
+#         return local_out
+
 class ColumnParallelLinear(nn.Module):
     """
     Splits an nn.Linear's input dimension across world_size GPUs.
@@ -250,11 +303,9 @@ class ColumnParallelLinear(nn.Module):
             torch.empty(out_features, self.local_in, device=torch.cuda.current_device())
         )
 
-        # handle bias properly
+        # replicate full bias on each rank (no sharding)
         if orig_linear.bias is not None:
-            self.bias = nn.Parameter(
-                torch.empty(out_features, device=torch.cuda.current_device())
-            )
+            self.bias = nn.Parameter(orig_linear.bias.data.clone().to(self.weight.device))
         else:
             self.bias = None
 
@@ -263,19 +314,13 @@ class ColumnParallelLinear(nn.Module):
         rank = dist.get_rank(group=self.group)
         self.weight.data.copy_(weight_shards[rank])
 
-        # split pretrained bias if exists
-        if orig_linear.bias is not None:
-            bias_shards = orig_linear.bias.data.chunk(world_size, dim=0)
-            self.bias.data.copy_(bias_shards[rank])
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [batch, in_features]
-        # slice local columns
         rank = dist.get_rank(group=self.group)
         start = rank * self.local_in
         end = start + self.local_in
         x_shard = x[:, start:end]
-        local_out = F.linear(x_shard, self.weight, None)
+        local_out = F.linear(x_shard, self.weight, bias=None)
 
         # all-reduce partial outputs
         dist.all_reduce(local_out, group=self.group)
