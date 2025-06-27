@@ -48,13 +48,13 @@ export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12356
 
 # GPUs to use
-# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
-export CUDA_VISIBLE_DEVICES=4,5
+# export CUDA_VISIBLE_DEVICES=4,5
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4 8)
-TP_SIZE=(2)
+TP_SIZE=(8)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
@@ -222,9 +222,9 @@ for iter in "${ITERATIONS[@]}"; do
               --tensor_parallel_size $tp_size \
               --loss_type            g-e \
               --ge_config            $ge_config \
-              --model_name           "gpt2-large" \
+              --model_name           "gpt2-medium" \
               --dataset              $dataset \
-              --batch_size           16 \
+              --batch_size           32 \
               --max_length           128 \
               --learning_rate        3e-5 \
               --weight_decay         0.01 \
