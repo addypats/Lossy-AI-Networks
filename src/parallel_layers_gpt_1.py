@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.nn.functional as F
+from transformers.models.gpt2.modeling_gpt2 import Conv1D
 
 class RowParallelLinear(nn.Module):
     """
@@ -149,26 +150,66 @@ def parallelize_gpt2(model, world_size=None, group=None):
         if dist.get_rank(group) == 0:
             print("⚠️ vocab_size not divisible by world_size; using replicated embeddings")
 
-    # 2) Transformer blocks
+    # # 2) Transformer blocks
+    # for block in model.h:
+    #     # QKV combined projection: c_attn -> three columns
+    #     c_attn = block.attn.c_attn
+    #     qkv_size = c_attn.out_features  # 3*hidden
+    #     # split into Q, K, V layers
+    #     q_proj = ColumnParallelLinear(nn.Linear(c_attn.in_features, qkv_size // 3), world_size, group)
+    #     k_proj = ColumnParallelLinear(nn.Linear(c_attn.in_features, qkv_size // 3), world_size, group)
+    #     v_proj = ColumnParallelLinear(nn.Linear(c_attn.in_features, qkv_size // 3), world_size, group)
+    #     block.attn.q_proj = q_proj
+    #     block.attn.k_proj = k_proj
+    #     block.attn.v_proj = v_proj
+    #     # remove original c_attn
+    #     del block.attn.c_attn
+
+    #     # Output projection
+    #     block.attn.c_proj = RowParallelLinear(block.attn.c_proj, world_size, group)
+
+    #     # MLP up and down
+    #     block.mlp.c_fc = ColumnParallelLinear(block.mlp.c_fc, world_size, group)
+    #     block.mlp.c_proj = RowParallelLinear(block.mlp.c_proj, world_size, group)
+    
     for block in model.h:
-        # QKV combined projection: c_attn -> three columns
-        c_attn = block.attn.c_attn
-        qkv_size = c_attn.out_features  # 3*hidden
-        # split into Q, K, V layers
-        q_proj = ColumnParallelLinear(nn.Linear(c_attn.in_features, qkv_size // 3), world_size, group)
-        k_proj = ColumnParallelLinear(nn.Linear(c_attn.in_features, qkv_size // 3), world_size, group)
-        v_proj = ColumnParallelLinear(nn.Linear(c_attn.in_features, qkv_size // 3), world_size, group)
-        block.attn.q_proj = q_proj
-        block.attn.k_proj = k_proj
-        block.attn.v_proj = v_proj
-        # remove original c_attn
-        del block.attn.c_attn
+        # --- handle combined QKV conv1d ---
+        orig_qkv = block.attn.c_attn
+        if isinstance(orig_qkv, Conv1D):
+            # weight: [in_dim, 3*hidden], bias: [3*hidden]
+            w, b = orig_qkv.weight.data, orig_qkv.bias.data
+            in_dim, out_dim = w.shape   # out_dim = 3*hidden
+            hidden = out_dim // 3
 
-        # Output projection
-        block.attn.c_proj = RowParallelLinear(block.attn.c_proj, world_size, group)
+            # build three Linear modules and shard each
+            def make_shard(start, end):
+                lin = nn.Linear(in_dim, end-start, bias=True).to(w.device)
+                # nn.Linear.weight is [out, in], so transpose
+                lin.weight.data.copy_(w[:, start:end].T)
+                lin.bias.data.copy_(b[start:end])
+                return lin
 
-        # MLP up and down
-        block.mlp.c_fc = ColumnParallelLinear(block.mlp.c_fc, world_size, group)
+            q_lin = make_shard(0,   hidden)
+            k_lin = make_shard(hidden,   2*hidden)
+            v_lin = make_shard(2*hidden, 3*hidden)
+
+            block.attn.q_proj = ColumnParallelLinear(q_lin, world_size, group)
+            block.attn.k_proj = ColumnParallelLinear(k_lin, world_size, group)
+            block.attn.v_proj = ColumnParallelLinear(v_lin, world_size, group)
+            del block.attn.c_attn
+
+        # --- handle output projection (also Conv1D) ---
+        orig_proj = block.attn.c_proj
+        if isinstance(orig_proj, Conv1D):
+            w2, b2 = orig_proj.weight.data, orig_proj.bias.data
+            in2, out2 = w2.shape
+            lin2 = nn.Linear(in2, out2, bias=True).to(w2.device)
+            lin2.weight.data.copy_(w2.T)
+            lin2.bias.data.copy_(b2)
+            block.attn.c_proj = RowParallelLinear(lin2, world_size, group)
+
+        # --- MLP up/down are already nn.Linear in HF (no need to change) ---
+        block.mlp.c_fc   = ColumnParallelLinear(block.mlp.c_fc, world_size, group)
         block.mlp.c_proj = RowParallelLinear(block.mlp.c_proj, world_size, group)
 
     # 3) Final LM head
