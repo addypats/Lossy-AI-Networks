@@ -463,16 +463,31 @@ def parallelize_gpt2(model, world_size=None, group=None):
         lin2.weight.data.copy_(w2.T); lin2.bias.data.copy_(b2)
         block.attn.c_proj = RowParallelLinear(lin2, world_size, group)
 
-        # MLP layers
-        for name, attr in [('c_fc', ColumnParallelLinear), ('c_proj', RowParallelLinear)]:
-            orig_m = getattr(block.mlp, name)
-            if isinstance(orig_m, Conv1D):
-                w3, b3 = orig_m.weight.data, orig_m.bias.data
-                lin3 = nn.Linear(w3.shape[1], w3.shape[0], bias=True).to(w3.device)
-                lin3.weight.data.copy_(w3.T); lin3.bias.data.copy_(b3)
-                setattr(block.mlp, name, attr(lin3, world_size, group))
-            else:
-                setattr(block.mlp, name, attr(orig_m, world_size, group))
+                # MLP layers
+        # c_fc (expand layer)
+        orig_fc = block.mlp.c_fc
+        if isinstance(orig_fc, Conv1D):
+            w3, b3 = orig_fc.weight.data, orig_fc.bias.data
+            in3, out3 = w3.shape  # in3=hidden, out3=4*hidden
+            lin3 = nn.Linear(in3, out3, bias=True).to(w3.device)
+            lin3.weight.data.copy_(w3.T)
+            lin3.bias.data.copy_(b3)
+            block.mlp.c_fc = ColumnParallelLinear(lin3, world_size, group)
+        else:
+            block.mlp.c_fc = ColumnParallelLinear(orig_fc, world_size, group)
+
+        # c_proj (projection layer)
+        orig_fp = block.mlp.c_proj
+        if isinstance(orig_fp, Conv1D):
+            w4, b4 = orig_fp.weight.data, orig_fp.bias.data
+            in4, out4 = w4.shape  # in4=4*hidden or hidden, out4=hidden
+            lin4 = nn.Linear(in4, out4, bias=True).to(w4.device)
+            lin4.weight.data.copy_(w4.T)
+            lin4.bias.data.copy_(b4)
+            block.mlp.c_proj = RowParallelLinear(lin4, world_size, group)
+        else:
+            block.mlp.c_proj = RowParallelLinear(orig_fp, world_size, group)
 
     # no lm_head on model.transformer
+    # return model on model.transformer
     return model
