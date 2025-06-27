@@ -64,7 +64,7 @@ TP_SIZE=(2)
 # GE_CONFIG=("short_1percent" "short_half_percent" "short_point_2percent" "short_point1_percent")
 # GE_CONFIG=("long_point1_percent")
 # GE_CONFIG=("short_point_2percent" "short_point1_percent")
-GE_CONFIG=("zero" "one_precent")
+GE_CONFIG=("zero")
 
 # Loss-rate grid
 LOSS_RATES=(0.001 0.002 0.005 0.01)

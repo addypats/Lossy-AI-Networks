@@ -454,9 +454,30 @@ def parallelize_gpt2(model, world_size=None, group=None):
         lin2.bias.data.copy_(b2)
         block.attn.c_proj = RowParallelLinear(lin2, world_size, group)
 
-        # MLP layers
-        block.mlp.c_fc = ColumnParallelLinear(block.mlp.c_fc, world_size, group)
-        block.mlp.c_proj = RowParallelLinear(block.mlp.c_proj, world_size, group)
+                # MLP layers
+        # c_fc (up projection)
+        orig_fc = block.mlp.c_fc
+        if isinstance(orig_fc, Conv1D):
+            w3, b3 = orig_fc.weight.data, orig_fc.bias.data
+            in3, out3 = w3.shape
+            lin3 = nn.Linear(in3, out3, bias=True).to(w3.device)
+            lin3.weight.data.copy_(w3.T)
+            lin3.bias.data.copy_(b3)
+            block.mlp.c_fc = ColumnParallelLinear(lin3, world_size, group)
+        else:
+            block.mlp.c_fc = ColumnParallelLinear(orig_fc, world_size, group)
+
+        # c_proj (down projection)
+        orig_fc_proj = block.mlp.c_proj
+        if isinstance(orig_fc_proj, Conv1D):
+            w4, b4 = orig_fc_proj.weight.data, orig_fc_proj.bias.data
+            in4, out4 = w4.shape
+            lin4 = nn.Linear(in4, out4, bias=True).to(w4.device)
+            lin4.weight.data.copy_(w4.T)
+            lin4.bias.data.copy_(b4)
+            block.mlp.c_proj = RowParallelLinear(lin4, world_size, group)
+        else:
+            block.mlp.c_proj = RowParallelLinear(orig_fc_proj, world_size, group)
 
     # Final LM head
     try:
