@@ -422,6 +422,16 @@ def parallelize_gpt2(model, world_size=None, group=None):
         if dist.get_rank(group) == 0:
             print("⚠️ vocab_size not divisible by world_size; using replicated embeddings")
 
+    # Helper module for fused QKV
+    class FusedQKV(nn.Module):
+        def __init__(self, q_proj, k_proj, v_proj):
+            super().__init__()
+            self.q = q_proj
+            self.k = k_proj
+            self.v = v_proj
+        def forward(self, x):
+            return torch.cat([self.q(x), self.k(x), self.v(x)], dim=-1)
+
     for block in model.h:
         # handle QKV splitting
         orig = block.attn.c_attn
@@ -442,10 +452,8 @@ def parallelize_gpt2(model, world_size=None, group=None):
         block.attn.k_proj = ColumnParallelLinear(k_lin, world_size, group)
         block.attn.v_proj = ColumnParallelLinear(v_lin, world_size, group)
 
-        # define fused c_attn to satisfy forward
-        def fused_c_attn(x, q=block.attn.q_proj, k=block.attn.k_proj, v=block.attn.v_proj):
-            return torch.cat([q(x), k(x), v(x)], dim=-1)
-        block.attn.c_attn = fused_c_attn
+        # use FusedQKV module to replace c_attn
+        block.attn.c_attn = FusedQKV(block.attn.q_proj, block.attn.k_proj, block.attn.v_proj)
         block.attn.split_size = hidden
 
         # output projection
