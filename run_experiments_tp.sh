@@ -54,7 +54,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4 8)
-TP_SIZE=(4)
+TP_SIZE=(8)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
@@ -71,7 +71,8 @@ LOSS_RATES=(0.001 0.002 0.005 0.01)
 
 # Datasets
 # DATASETS=("winogrande" "mnli" "hellaswag" "piqa")
-DATASETS=("mnli")
+# DATASETS=("mnli")
+DATASETS=("sst2")
 
 # Precision Flags
 # FP_FLAGS=(fp32 fp16)
@@ -83,7 +84,8 @@ ITERATIONS=(1)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-mkdir -p output_gpt2-large_BurstyLosses_mnli
+# mkdir -p output_gpt2-large_BurstyLosses_mnli
+mkdir -p output_gpt2-large_BurstyLosses_sst2
 
 
 # Running script for uniform loss with loss rates like the previous ones - used for bernoulli' (The standard loss rate function)

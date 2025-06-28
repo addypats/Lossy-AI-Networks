@@ -1,5 +1,5 @@
 batch_size: 16
-dataset: mnli
+dataset: sst2
 eval_steps: 20
 fp16: false
 ge_config: zero
