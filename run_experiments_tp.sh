@@ -1,4 +1,4 @@
-#!/bin/bash
+!/bin/bash
 # Launch 4 ranks for tensor parallelism (one per GPU)
 
 # This is for the 4 GPU instnace machine
