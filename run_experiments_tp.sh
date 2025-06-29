@@ -117,7 +117,7 @@ mkdir -p output_gpt2-large_uniform_Bernoulli_Losses_mnli
 #         echo "=== Starting with dataset ${dataset} ==="
 #         echo
 #         for loss_rate in "${LOSS_RATES[@]}"; do
-#           run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_lr${loss_rate}_Iteration_${iter}"
+#           run_id="target_steps_tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_lr${loss_rate}_Iteration_${iter}"
 #           echo
 #           echo "=== Starting $run_id ==="
 #           echo
@@ -185,7 +185,7 @@ for iter in "${ITERATIONS[@]}"; do
         echo "=== Starting with dataset ${dataset} ==="
         echo
         for ge_config in "${GE_CONFIG[@]}"; do
-          run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}_Short_Burst_Loss_Iteration_${iter}"
+          run_id="target_steps_tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}_Short_Burst_Loss_Iteration_${iter}"
           echo
           echo "=== Starting $run_id ==="
           echo

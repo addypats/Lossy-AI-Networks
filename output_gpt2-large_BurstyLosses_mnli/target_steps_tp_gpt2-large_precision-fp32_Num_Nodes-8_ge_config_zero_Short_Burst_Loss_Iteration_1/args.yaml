@@ -11,7 +11,7 @@ max_length: 128
 max_samples: 0
 max_steps: 500
 model_name: gpt2-large
-output_dir: output_gpt2-large_BurstyLosses_mnli/tp_gpt2-large_precision-fp32_Num_Nodes-8_ge_config_zero_Short_Burst_Loss_Iteration_1
+output_dir: output_gpt2-large_BurstyLosses_mnli/target_steps_tp_gpt2-large_precision-fp32_Num_Nodes-8_ge_config_zero_Short_Burst_Loss_Iteration_1
 patience: 15
 seed: 1234
 target_accuracy: 0.75
