@@ -1,5 +1,5 @@
 batch_size: 16
-dataset: mnli
+dataset: sst2
 eval_steps: 20
 fp16: false
 ge_config: long_50percent
@@ -14,6 +14,6 @@ model_name: gpt2-large
 output_dir: output_gpt2-large_BurstyLosses_mnli/tp_gpt2-large_precision-fp32_Num_Nodes-4_ge_config_long_50percent_Short_Burst_Loss_Iteration_1
 patience: 10
 seed: 1234
-target_accuracy: 0.75
+target_accuracy: 0.95
 tensor_parallel_size: 4
 weight_decay: 0.01
