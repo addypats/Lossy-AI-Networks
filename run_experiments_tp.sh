@@ -54,16 +54,16 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4 8)
-TP_SIZE=(4)
+TP_SIZE=(8)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
-# GE_CONFIG=("one_precent" "half_percent" "point2_percent" "long_point1_percent")
+GE_CONFIG=("long_1percent" "long_half_percent" "long_point2_percent" "long_point1_percent")
 # GE_CONFIG=("one_precent" "half_percent" "point2_percent")
 # GE_CONFIG=("default" "one_precent" "half_percent")
-# GE_CONFIG=("short_1percent" "short_half_percent" "short_point_2percent" "short_point1_percent")
+# GE_CONFIG=("zero" "short_1percent" "short_half_percent" "short_point_2percent" "short_point1_percent")
 # GE_CONFIG=("long_point1_percent")
-GE_CONFIG=("zero" "ber_20" "long_50percent" "90_loss")
+# GE_CONFIG=("zero" "ber_20" "long_50percent" "90_loss")
 
 # Loss-rate grid
 LOSS_RATES=(0.001 0.002 0.005 0.01)
@@ -185,7 +185,7 @@ for iter in "${ITERATIONS[@]}"; do
         echo "=== Starting with dataset ${dataset} ==="
         echo
         for ge_config in "${GE_CONFIG[@]}"; do
-          run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}_Short_Burst_Loss_Iteration_${iter}"
+          run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}_Long_Burst_Loss_Iteration_${iter}"
           echo
           echo "=== Starting $run_id ==="
           echo
@@ -211,9 +211,9 @@ for iter in "${ITERATIONS[@]}"; do
               --max_samples          0 \
               --target_accuracy      0.75 \
               --eval_steps           20 \
-              --patience             10 \
+              --patience             15 \
               --max_steps            100000 \
-              --output_dir           "output_gpt2-large_BurstyLosses_mnli/$run_id" \
+              --output_dir           "output_gpt2-large_BurstyLosses_sst2/$run_id" \
 
           echo "=== Completed $run_id ==="
           echo

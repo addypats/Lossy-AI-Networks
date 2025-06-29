@@ -6,7 +6,7 @@ winogrande:
 sst2:
   num_labels: 2
   report_ttac: [0.7, 0.8, 0.9]
-  target_acc: 0.95
+  target_acc: 0.90
 
 arc:
   num_labels: 4
