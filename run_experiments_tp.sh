@@ -133,7 +133,7 @@ mkdir -p output_gpt2-large_BurstyLosses_mnli
 #               --ge_config             default \
 #               --model_name           "gpt2-large" \
 #               --dataset              $dataset \
-#               --batch_size           8 \
+#               --batch_size           16 \
 #               --max_length           128 \
 #               --learning_rate        3e-5 \
 #               --weight_decay         0.01 \

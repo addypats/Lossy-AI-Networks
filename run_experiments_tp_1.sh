@@ -54,17 +54,16 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4 8)
-TP_SIZE=(8)
+TP_SIZE=(2)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
-# GE_CONFIG=("one_precent" "half_percent" "point2_percent" "long_point1_percent")
+# GE_CONFIG=("long_1percent" "long_half_percent" "long_point2_percent" "long_point1_percent")
 # GE_CONFIG=("one_precent" "half_percent" "point2_percent")
 # GE_CONFIG=("default" "one_precent" "half_percent")
-# GE_CONFIG=("short_1percent" "short_half_percent" "short_point_2percent" "short_point1_percent")
+GE_CONFIG=("zero" "short_1percent" "short_half_percent" "short_point_2percent" "short_point1_percent")
 # GE_CONFIG=("long_point1_percent")
-# GE_CONFIG=("short_point_2percent" "short_point1_percent")
-GE_CONFIG=("zero")
+# GE_CONFIG=("zero" "ber_20" "long_50percent" "90_loss")
 
 # Loss-rate grid
 LOSS_RATES=(0.001 0.002 0.005 0.01)
@@ -116,7 +115,7 @@ mkdir -p output_gpt2-large_BurstyLosses_mnli
 #         echo "=== Starting with dataset ${dataset} ==="
 #         echo
 #         for loss_rate in "${LOSS_RATES[@]}"; do
-#           run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_lr${loss_rate}_Iteration_${iter}"
+#           run_id="target_steps_tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_lr${loss_rate}_Iteration_${iter}"
 #           echo
 #           echo "=== Starting $run_id ==="
 #           echo
@@ -132,7 +131,7 @@ mkdir -p output_gpt2-large_BurstyLosses_mnli
 #               --ge_config             default \
 #               --model_name           "gpt2-large" \
 #               --dataset              $dataset \
-#               --batch_size           8 \
+#               --batch_size           16 \
 #               --max_length           128 \
 #               --learning_rate        3e-5 \
 #               --weight_decay         0.01 \
@@ -143,32 +142,8 @@ mkdir -p output_gpt2-large_BurstyLosses_mnli
 #               --target_accuracy      0.75 \
 #               --eval_steps           20 \
 #               --patience             10 \
-#               --max_steps            100000 \
-#               --output_dir           "output_gpt2-large_uniform_Bernoulli_Losses_mnli/$run_id" \
-
-#           # New set of parameters - mod tp script
-#           # $TORCHRUN \
-#           #   --nproc_per_node $tp_size \
-#           #   --master_addr   $MASTER_ADDR \
-#           #   --master_port   $MASTER_PORT \
-#           #   src/Mod_src_TP/pytorch_train_tp.py \
-#           #     --tensor_parallel_size $tp_size \
-#           #     --model_name           "meta-llama/Llama-3.2-1B" \
-#           #     --dataset              $dataset \
-#           #     --batch_size           8 \
-#           #     --max_length           256 \
-#           #     --learning_rate        2e-5 \
-#           #     --weight_decay         0.01 \
-#           #     --loss_rate            $loss_rate \
-#           #     --fp16 \
-#           #     --seed                 1234 \
-#           #     --max_samples          0 \
-#           #     --target_accuracy      0.75 \
-#           #     --eval_steps           100 \
-#           #     --patience             5 \
-#           #     --max_steps            100000 \
-#           #     --output_dir           "output_Llama3.2-1B/$run_id" \
-#           #    --run_name $run_id
+#               --max_steps            500 \
+#               --output_dir           "output_gpt2-large_uniform_Bernoulli_Losses_sst2/$run_id" \
 
 #           echo "=== Completed $run_id ==="
 #           echo
@@ -208,7 +183,7 @@ for iter in "${ITERATIONS[@]}"; do
         echo "=== Starting with dataset ${dataset} ==="
         echo
         for ge_config in "${GE_CONFIG[@]}"; do
-          run_id="tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}_Long_Burst_Loss_Iteration_${iter}"
+          run_id="target_steps_tp_gpt2-large_precision-${temp_flag}_Num_Nodes-${tp_size}_ge_config_${ge_config}_Short_Burst_Loss_Iteration_${iter}"
           echo
           echo "=== Starting $run_id ==="
           echo
@@ -218,13 +193,13 @@ for iter in "${ITERATIONS[@]}"; do
             --nproc_per_node $tp_size \
             --master_addr   $MASTER_ADDR \
             --master_port   $MASTER_PORT \
-            src/pytorch_train_gpt_1.py \
+            src/pytorch_train_tp_gpt.py \
               --tensor_parallel_size $tp_size \
               --loss_type            g-e \
               --ge_config            $ge_config \
-              --model_name           "gpt2-medium" \
+              --model_name           "gpt2-large" \
               --dataset              $dataset \
-              --batch_size           32 \
+              --batch_size           16 \
               --max_length           128 \
               --learning_rate        3e-5 \
               --weight_decay         0.01 \
@@ -234,8 +209,8 @@ for iter in "${ITERATIONS[@]}"; do
               --max_samples          0 \
               --target_accuracy      0.75 \
               --eval_steps           20 \
-              --patience             10 \
-              --max_steps            100000 \
+              --patience             15 \
+              --max_steps            500 \
               --output_dir           "output_gpt2-large_BurstyLosses_mnli/$run_id" \
 
           echo "=== Completed $run_id ==="
