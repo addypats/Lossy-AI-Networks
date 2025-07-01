@@ -1182,15 +1182,32 @@ import wandb  # ← wandb import
 
 from comms import LossyNetwork, GillbertElliotLossyNetwork
 from data import get_dataset
-from parallel_layers_gpt import RowParallelLinear
+from parallel_layers_gpt import RowParallelLinear, ColumnParallelLinear
 
-def replace_linears(module: nn.Module, world_size: int, group: dist.ProcessGroup):
+# Original replace_linears with only RowParallel
+# def replace_linears(module: nn.Module, world_size: int, group: dist.ProcessGroup):
+#     for name, child in list(module.named_children()):
+#         if isinstance(child, nn.Linear):
+#             out_f = child.out_features
+#             if out_f % world_size == 0:
+#                 wrapped = RowParallelLinear(child, world_size, group)
+#                 setattr(module, name, wrapped)
+#         else:
+#             replace_linears(child, world_size, group)
+
+
+# New replace_linears with both
+def replace_linears(module, world_size, group):
     for name, child in list(module.named_children()):
         if isinstance(child, nn.Linear):
-            out_f = child.out_features
-            if out_f % world_size == 0:
+            in_f, out_f = child.in_features, child.out_features
+            if in_f % world_size == 0:
+                wrapped = ColumnParallelLinear(child, world_size, group)
+            elif out_f % world_size == 0:
                 wrapped = RowParallelLinear(child, world_size, group)
-                setattr(module, name, wrapped)
+            else:
+                continue
+            setattr(module, name, wrapped)
         else:
             replace_linears(child, world_size, group)
 
