@@ -1198,18 +1198,46 @@ from transformers.models.gpt2.modeling_gpt2 import Conv1D
 
 
 # New replace_linears with both
+# def replace_linears(module, world_size, group):
+#     for name, child in list(module.named_children()):
+#         if isinstance(child, (nn.Linear, Conv1D)):
+#             in_f, out_f = child.in_features, child.out_features
+#             if in_f % world_size == 0:
+#                 wrapped = ColumnParallelLinear(child, world_size, group)
+#             elif out_f % world_size == 0:
+#                 wrapped = RowParallelLinear(child, world_size, group)
+#             else:
+#                 continue
+#             setattr(module, name, wrapped)
+#         else:
+#             replace_linears(child, world_size, group)
+
 def replace_linears(module, world_size, group):
     for name, child in list(module.named_children()):
+        # Match both pure Linear and GPT2's Conv1D
         if isinstance(child, (nn.Linear, Conv1D)):
-            in_f, out_f = child.in_features, child.out_features
+            # weight: either [out,in] (Linear) or [in,out] (Conv1D)
+            w = child.weight.data
+            if isinstance(child, Conv1D):
+                # Conv1D stores weight as [in, out]
+                in_f, out_f = w.shape
+            else:
+                # Linear stores weight as [out, in]
+                out_f, in_f = w.shape
+
+            # now decide shard type
             if in_f % world_size == 0:
                 wrapped = ColumnParallelLinear(child, world_size, group)
             elif out_f % world_size == 0:
                 wrapped = RowParallelLinear(child, world_size, group)
             else:
+                # can’t shard—skip
                 continue
+
             setattr(module, name, wrapped)
+
         else:
+            # recurse into submodules
             replace_linears(child, world_size, group)
 
 def train_step(model, inputs, optimizer, network):
