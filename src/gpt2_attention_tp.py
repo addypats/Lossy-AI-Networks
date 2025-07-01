@@ -93,8 +93,6 @@ class TensorParallelGPT2Attention(GPT2Attention):
         head_start = rank * local_num_heads
         head_end = head_start + local_num_heads
         
-        print(f"[Rank {rank}] GPT2 TP Attention: local_embed_dim={local_embed_dim}, heads {head_start}:{head_end}")
-        
         # Reshape weights to be head-wise: [num_heads, head_dim, embed_dim]
         q_weight_heads = q_weight.view(self.num_heads, self.head_dim, in_features)
         k_weight_heads = k_weight.view(self.num_heads, self.head_dim, in_features)
@@ -104,8 +102,6 @@ class TensorParallelGPT2Attention(GPT2Attention):
         q_local = q_weight_heads[head_start:head_end].view(local_embed_dim, in_features)
         k_local = k_weight_heads[head_start:head_end].view(local_embed_dim, in_features)
         v_local = v_weight_heads[head_start:head_end].view(local_embed_dim, in_features)
-        
-        print(f"[Rank {rank}] Weight shapes: q_local={q_local.shape}, q_proj.weight={self.q_proj.weight.shape}")
         
         self.q_proj.weight.data.copy_(q_local)
         self.k_proj.weight.data.copy_(k_local)
@@ -125,13 +121,13 @@ class TensorParallelGPT2Attention(GPT2Attention):
         self.local_embed_dim = local_embed_dim
         
         # Output projection as row parallel - takes local attention output and produces full embed_dim
-        self.c_proj = LinearShardedInputsLossy(
-            local_embed_dim, self.embed_dim, group, lossy_network,
+        self.c_proj = nn.Linear(
+            local_embed_dim, self.embed_dim, bias=(original_attention.c_proj.bias is not None),
             device=original_attention.c_proj.weight.device,
             dtype=original_attention.c_proj.weight.dtype
         )
         
-        # Initialize c_proj weights - need to take the rows corresponding to our heads
+        # Initialize c_proj weights - need to take the columns corresponding to our heads
         if isinstance(original_attention.c_proj, Conv1D):
             # Conv1D weight needs transposing: [embed_dim, embed_dim] -> [embed_dim, embed_dim]
             c_proj_weight = original_attention.c_proj.weight.data.transpose(0, 1)  # [embed_dim, embed_dim]
@@ -143,7 +139,7 @@ class TensorParallelGPT2Attention(GPT2Attention):
         # Take columns for our heads and flatten: [embed_dim, local_embed_dim]
         c_proj_local = c_proj_heads[:, head_start:head_end, :].view(self.embed_dim, local_embed_dim)
         
-        self.c_proj.weight.data.copy_(c_proj_local.T)  # LinearShardedInputsLossy expects transposed weight
+        self.c_proj.weight.data.copy_(c_proj_local)  # nn.Linear expects [out_features, in_features] = [embed_dim, local_embed_dim]
         if original_attention.c_proj.bias is not None:
             self.c_proj.bias.data.copy_(original_attention.c_proj.bias.data)
         
@@ -257,8 +253,12 @@ class TensorParallelGPT2Attention(GPT2Attention):
         # Merge heads back - this gives us [batch, seq, local_embed_dim]
         attn_output = self._merge_heads(attn_output, self.local_num_heads, self.head_dim)
         
-        # Apply row-parallel output projection (will gather across ranks)
+        # Apply output projection locally
         attn_output = self.c_proj(attn_output)
+        
+        # Apply lossy all-reduce to combine outputs from all ranks
+        attn_output = LossyAllReduceFwdIdentityBwd.apply(attn_output, self.group, self.lossy_network)
+        
         attn_output = self.resid_dropout(attn_output)
 
         outputs = (attn_output, present)
