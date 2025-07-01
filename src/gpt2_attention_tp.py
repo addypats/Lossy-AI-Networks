@@ -70,20 +70,20 @@ class TensorParallelGPT2Attention(GPT2Attention):
         assert self.num_heads % world_size == 0, f"num_heads ({self.num_heads}) must be divisible by world_size ({world_size})"
         
         local_num_heads = self.num_heads // world_size
-        local_embed_dim = self.embed_dim // world_size
+        local_embed_dim = self.embed_dim // world_size  # This matches what LinearShardedOutputsLossy calculates
         
         self.q_proj = LinearShardedOutputsLossy(
-            in_features, local_embed_dim, group, lossy_network,
+            in_features, self.embed_dim, group, lossy_network,
             device=self.c_attn_original.weight.device, 
             dtype=self.c_attn_original.weight.dtype
         )
         self.k_proj = LinearShardedOutputsLossy(
-            in_features, local_embed_dim, group, lossy_network,
+            in_features, self.embed_dim, group, lossy_network,
             device=self.c_attn_original.weight.device,
             dtype=self.c_attn_original.weight.dtype
         )
         self.v_proj = LinearShardedOutputsLossy(
-            in_features, local_embed_dim, group, lossy_network,
+            in_features, self.embed_dim, group, lossy_network,
             device=self.c_attn_original.weight.device,
             dtype=self.c_attn_original.weight.dtype
         )
@@ -92,6 +92,8 @@ class TensorParallelGPT2Attention(GPT2Attention):
         rank = dist.get_rank(group)
         head_start = rank * local_num_heads
         head_end = head_start + local_num_heads
+        
+        print(f"[Rank {rank}] GPT2 TP Attention: local_embed_dim={local_embed_dim}, heads {head_start}:{head_end}")
         
         # Reshape weights to be head-wise: [num_heads, head_dim, embed_dim]
         q_weight_heads = q_weight.view(self.num_heads, self.head_dim, in_features)
@@ -102,6 +104,8 @@ class TensorParallelGPT2Attention(GPT2Attention):
         q_local = q_weight_heads[head_start:head_end].view(local_embed_dim, in_features)
         k_local = k_weight_heads[head_start:head_end].view(local_embed_dim, in_features)
         v_local = v_weight_heads[head_start:head_end].view(local_embed_dim, in_features)
+        
+        print(f"[Rank {rank}] Weight shapes: q_local={q_local.shape}, q_proj.weight={self.q_proj.weight.shape}")
         
         self.q_proj.weight.data.copy_(q_local)
         self.k_proj.weight.data.copy_(k_local)
