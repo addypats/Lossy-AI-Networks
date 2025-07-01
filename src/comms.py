@@ -66,10 +66,12 @@ class LossyNetwork:
 
     def set_seed(self, seed: int):
         self.seed = seed
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
 
     def send(self, data: torch.Tensor) -> torch.Tensor:
         num_packets = get_num_packets(data)
-        packets_mask = torch.rand(num_packets, device=data.device) > self.loss_rate
+        packets_mask = torch.rand(num_packets) > self.loss_rate
         return packets_mask
     
     def receive(self, data: torch.Tensor, packets_mask: torch.Tensor) -> torch.Tensor:
@@ -101,25 +103,14 @@ class GillbertElliotLossyNetwork(LossyNetwork):
         if self.good_loss_rate > self.bad_loss_rate:
             raise ValueError("Good loss rate must be less than or equal to bad loss rate.")
         self.state = 'good'
-        
-        # Use rank-specific random state for consistency across runs
-        import torch.distributed as dist
-        if dist.is_initialized():
-            rank = dist.get_rank()
-            self.rng = torch.Generator()
-            self.rng.manual_seed(hash(f"ge_state_{rank}") % 2**32)
 
-    def take_step(self):
-        if hasattr(self, 'rng'):
-            rand_val = torch.rand(1, generator=self.rng).item()
-        else:
-            rand_val = torch.rand(1).item()
-            
+    def take_step(self, n_steps=1):
+        transition_probabilities = torch.rand(n_steps)
         if self.state == 'good':
-            if rand_val < self.p_gb:
+            if torch.rand(1).item() < self.p_gb:
                 self.state = 'bad'
         else:
-            if rand_val < self.p_bg:
+            if torch.rand(1).item() < self.p_bg:
                 self.state = 'good'
         return self.state
             
@@ -127,9 +118,9 @@ class GillbertElliotLossyNetwork(LossyNetwork):
         self.take_step()
         num_packets = get_num_packets(data)
         if self.state == 'good':
-            packets_mask = torch.rand(num_packets, device=data.device) > self.good_loss_rate
+            packets_mask = torch.rand(num_packets) > self.good_loss_rate
         else:
-            packets_mask = torch.rand(num_packets, device=data.device) > self.bad_loss_rate
+            packets_mask = torch.rand(num_packets) > self.bad_loss_rate
         return packets_mask
 
 
