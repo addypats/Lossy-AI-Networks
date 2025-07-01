@@ -162,10 +162,21 @@ def replace_linear_with_tp_lossy(module, group, lossy_network, target_classes=(n
     """
     Replace linear layers with tensor parallel versions with lossy network simulation
     """
+    from transformers.models.gpt2.modeling_gpt2 import Conv1D
+    
     for name, child in list(module.named_children()):
         if isinstance(child, target_classes):
-            in_features = child.in_features
-            out_features = child.out_features
+            # Handle different layer types
+            if isinstance(child, Conv1D):
+                # Conv1D stores weight as [in_features, out_features]
+                in_features, out_features = child.weight.shape
+            elif isinstance(child, nn.Linear):
+                # Linear stores normally
+                in_features = child.in_features
+                out_features = child.out_features
+            else:
+                print(f"Skipping unknown layer type: {type(child)}")
+                continue
             
             # Choose whether to use row or column parallel based on divisibility
             if out_features % group.size() == 0:
@@ -180,7 +191,13 @@ def replace_linear_with_tp_lossy(module, group, lossy_network, target_classes=(n
                 start_idx = rank * shard_size
                 end_idx = start_idx + shard_size
                 
-                new_layer.weight.data.copy_(child.weight.data[start_idx:end_idx])
+                if isinstance(child, Conv1D):
+                    # Conv1D weight is [in, out], need to transpose for Linear format [out, in]
+                    weight_transposed = child.weight.data.transpose(0, 1)  # [out, in]
+                    new_layer.weight.data.copy_(weight_transposed[start_idx:end_idx])
+                else:
+                    new_layer.weight.data.copy_(child.weight.data[start_idx:end_idx])
+                    
                 if child.bias is not None:
                     new_layer.bias.data.copy_(child.bias.data[start_idx:end_idx])
                     
@@ -196,16 +213,22 @@ def replace_linear_with_tp_lossy(module, group, lossy_network, target_classes=(n
                 start_idx = rank * shard_size
                 end_idx = start_idx + shard_size
                 
-                new_layer.weight.data.copy_(child.weight.data[:, start_idx:end_idx])
+                if isinstance(child, Conv1D):
+                    # Conv1D weight is [in, out], need to transpose for Linear format [out, in]
+                    weight_transposed = child.weight.data.transpose(0, 1)  # [out, in]
+                    new_layer.weight.data.copy_(weight_transposed[:, start_idx:end_idx])
+                else:
+                    new_layer.weight.data.copy_(child.weight.data[:, start_idx:end_idx])
+                    
                 if child.bias is not None:
                     new_layer.bias.data.copy_(child.bias.data)
             else:
                 # Skip layers that can't be parallelized
-                print(f"Skipping layer {name}: dimensions not divisible by group size")
+                print(f"Skipping layer {name}: dimensions ({in_features}, {out_features}) not divisible by group size {group.size()}")
                 continue
                 
             setattr(module, name, new_layer)
-            print(f"Replaced {name} with tensor parallel version")
+            print(f"Replaced {name} with tensor parallel version: {in_features}x{out_features}")
         else:
             # Recursively apply to child modules
             replace_linear_with_tp_lossy(child, group, lossy_network, target_classes)
