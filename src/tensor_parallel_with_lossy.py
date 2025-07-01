@@ -163,6 +163,12 @@ def replace_linear_with_tp_lossy(module, group, lossy_network, target_classes=(n
     Replace linear layers with tensor parallel versions with lossy network simulation
     """
     from transformers.models.gpt2.modeling_gpt2 import Conv1D
+    from .gpt2_attention_tp import TensorParallelGPT2Attention
+    
+    # Skip if this module is already a TensorParallelGPT2Attention
+    if isinstance(module, TensorParallelGPT2Attention):
+        print(f"Skipping TensorParallelGPT2Attention - already tensor parallel")
+        return
     
     for name, child in list(module.named_children()):
         if isinstance(child, target_classes):
