@@ -148,17 +148,34 @@ class ColumnParallelLinear(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         # Column parallel: input is replicated, each rank has partial weights
-        # x should have shape [batch, in_features] and be identical across all ranks
+        # x can be 2D [batch, hidden] or 3D [batch, seq_len, hidden]
+        
+        # Store original shape for restoration
+        original_shape = x.shape
+        
+        # Handle both 2D and 3D inputs
+        if x.dim() == 3:
+            # 3D tensor: [batch, seq_len, hidden] -> reshape to [batch*seq_len, hidden]
+            batch_size, seq_len, hidden_size = x.shape
+            if hidden_size != self.in_features:
+                raise RuntimeError(f"ColumnParallel hidden dimension mismatch: got {hidden_size}, expected {self.in_features}")
+            x = x.view(-1, hidden_size)  # [batch*seq_len, hidden]
+        elif x.dim() == 2:
+            # 2D tensor: [batch, hidden]
+            if x.size(-1) != self.in_features:
+                raise RuntimeError(f"ColumnParallel input dimension mismatch: got {x.size(-1)}, expected {self.in_features}")
+        else:
+            raise RuntimeError(f"ColumnParallel expects 2D or 3D input, got {x.dim()}D with shape {x.shape}")
         
         rank = dist.get_rank(self.group)
         
         # Slice input to match our weight partition
         start = self.local_in * rank
         end = start + self.local_in
-        x_local = x[:, start:end]  # [batch, local_in]
+        x_local = x[:, start:end]  # [batch*seq_len, local_in]
 
         # Compute partial output
-        out = torch.matmul(x_local, self.weight.t())  # [batch, out_f]
+        out = torch.matmul(x_local, self.weight.t())  # [batch*seq_len, out_f]
 
         # All-reduce to sum partial results
         dist.all_reduce(out, group=self.group)
@@ -166,6 +183,11 @@ class ColumnParallelLinear(nn.Module):
         # Add bias only on rank 0 to avoid duplication
         if self.bias is not None:
             out = out + self.bias
+        
+        # Restore original shape if input was 3D
+        if len(original_shape) == 3:
+            batch_size, seq_len = original_shape[0], original_shape[1]
+            out = out.view(batch_size, seq_len, -1)  # [batch, seq_len, out_f]
             
         return out
 
@@ -209,17 +231,29 @@ class RowParallelLinear(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         # Row parallel: input is replicated, each rank computes partial output
-        # x should have shape [batch, in_features] and be identical across all ranks
+        # x can be 2D [batch, hidden] or 3D [batch, seq_len, hidden]
         
-        # Validate input shape
-        expected_shape = (x.size(0), self.in_features)
-        if x.shape != expected_shape:
-            raise RuntimeError(f"RowParallel input shape mismatch: got {x.shape}, expected {expected_shape}")
+        # Store original shape for restoration
+        original_shape = x.shape
+        
+        # Handle both 2D and 3D inputs
+        if x.dim() == 3:
+            # 3D tensor: [batch, seq_len, hidden] -> reshape to [batch*seq_len, hidden]
+            batch_size, seq_len, hidden_size = x.shape
+            if hidden_size != self.in_features:
+                raise RuntimeError(f"RowParallel hidden dimension mismatch: got {hidden_size}, expected {self.in_features}")
+            x = x.view(-1, hidden_size)  # [batch*seq_len, hidden]
+        elif x.dim() == 2:
+            # 2D tensor: [batch, hidden]
+            if x.size(-1) != self.in_features:
+                raise RuntimeError(f"RowParallel input dimension mismatch: got {x.size(-1)}, expected {self.in_features}")
+        else:
+            raise RuntimeError(f"RowParallel expects 2D or 3D input, got {x.dim()}D with shape {x.shape}")
         
         # Each rank computes its output shard with full input
-        out_shard = torch.nn.functional.linear(x, self.weight, self.bias)  # [batch, local_out]
+        out_shard = torch.nn.functional.linear(x, self.weight, self.bias)  # [batch*seq_len, local_out]
 
-        # Gather all shards from all ranks - this is the critical communication step
+        # Gather all shards from all ranks
         output_list = [torch.zeros_like(out_shard) for _ in range(self.world_size)]
         
         try:
@@ -228,7 +262,12 @@ class RowParallelLinear(nn.Module):
             print(f"Rank {dist.get_rank(self.group)}: all_gather failed with {e}")
             raise
         
-
         # Concatenate along the output dimension
-        result = torch.cat(output_list, dim=-1)  # [batch, out_f]
+        result = torch.cat(output_list, dim=-1)  # [batch*seq_len, out_f]
+        
+        # Restore original shape if input was 3D
+        if len(original_shape) == 3:
+            batch_size, seq_len = original_shape[0], original_shape[1]
+            result = result.view(batch_size, seq_len, -1)  # [batch, seq_len, out_f]
+            
         return result

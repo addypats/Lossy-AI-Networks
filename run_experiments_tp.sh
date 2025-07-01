@@ -48,13 +48,14 @@ export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12355
 
 # GPUs to use
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1
+# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
 # export CUDA_VISIBLE_DEVICES=1,2
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4 8)
-TP_SIZE=(8)
+TP_SIZE=(2)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
@@ -191,7 +192,10 @@ for iter in "${ITERATIONS[@]}"; do
           echo "=== Starting $run_id ==="
           echo
 
-          # Original Script
+          # Original Script with TP_SIZE validation
+          echo "Using tensor_parallel_size: $tp_size"
+          echo "Available GPUs: $CUDA_VISIBLE_DEVICES"
+          
           $TORCHRUN \
             --nproc_per_node $tp_size \
             --master_addr   $MASTER_ADDR \
@@ -202,7 +206,7 @@ for iter in "${ITERATIONS[@]}"; do
               --ge_config            $ge_config \
               --model_name           "gpt2-large" \
               --dataset              $dataset \
-              --batch_size           16 \
+              --batch_size           8 \
               --max_length           128 \
               --learning_rate        3e-5 \
               --weight_decay         0.01 \
