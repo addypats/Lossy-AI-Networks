@@ -151,58 +151,67 @@ class TensorParallelEmbedding(nn.Module):
 def replace_with_pure_tensor_parallel(model, lossy_network):
     """
     Replace model layers with pure tensor parallel versions
+    
+    Strategy:
+    1. Skip output/classification layers (score, classifier, lm_head) to avoid shape mismatches
+    2. Use column-parallel for layers where output dimension is divisible by world size
+    3. Use row-parallel as fallback for layers where input dimension is divisible
+    4. Skip layers that can't be evenly divided
+    5. Always gather outputs to ensure downstream layers receive full tensors
+    
+    This approach is conservative and prioritizes correctness over maximum parallelization.
     """
     tp_world_size = dist.get_world_size()
     replaced_count = 0
+    skipped_count = 0
+    
+    print(f"Applying pure tensor parallelism with world size: {tp_world_size}")
     
     def _replace_module(module, name=""):
-        nonlocal replaced_count
+        nonlocal replaced_count, skipped_count
         for child_name, child in list(module.named_children()):
             if isinstance(child, nn.Linear):
                 in_features = child.in_features
                 out_features = child.out_features
                 
-                # Strategy: use column parallel for most layers, row parallel for output layers
-                if "score" in child_name.lower() or "classifier" in child_name.lower():
-                    # Output layers: use row parallel (don't gather output)
-                    if in_features % tp_world_size == 0:
-                        new_layer = TensorParallelLinear(
-                            in_features, out_features,
-                            parallel_dim='input',
-                            lossy_network=lossy_network,
-                            bias=child.bias is not None,
-                            gather_output=False  # Don't gather for final output
-                        )
-                        print(f"Replaced {name}.{child_name} with row-parallel TP layer (output)")
-                    else:
-                        print(f"Skipping {name}.{child_name}: input dim not divisible")
-                        _replace_module(child, f"{name}.{child_name}")
-                        continue
+                # Strategy: Skip critical output layers to avoid shape mismatches
+                if ("score" in child_name.lower() or 
+                    "classifier" in child_name.lower() or
+                    "lm_head" in child_name.lower() or
+                    "embed_out" in child_name.lower() or
+                    "output" in child_name.lower()):
+                    # Output layers: keep as regular layers to avoid shape mismatches
+                    # The final classification head should receive full hidden states
+                    print(f"Skipping {name}.{child_name}: keeping as regular layer (output head)")
+                    skipped_count += 1
+                    _replace_module(child, f"{name}.{child_name}")
+                    continue
                         
                 elif out_features % tp_world_size == 0:
-                    # Hidden layers: use column parallel
+                    # Hidden layers: use column parallel (split output dimension)
                     new_layer = TensorParallelLinear(
                         in_features, out_features,
                         parallel_dim='output',
                         lossy_network=lossy_network,
                         bias=child.bias is not None,
-                        gather_output=True
+                        gather_output=True  # Always gather to ensure compatibility
                     )
                     print(f"Replaced {name}.{child_name} with column-parallel TP layer")
                     
                 elif in_features % tp_world_size == 0:
-                    # Use row parallel as fallback
+                    # Use row parallel as fallback (split input dimension)
                     new_layer = TensorParallelLinear(
                         in_features, out_features,
                         parallel_dim='input',
                         lossy_network=lossy_network,
                         bias=child.bias is not None,
-                        gather_output=True
+                        gather_output=True  # Always gather to ensure compatibility
                     )
                     print(f"Replaced {name}.{child_name} with row-parallel TP layer")
                     
                 else:
-                    print(f"Skipping {name}.{child_name}: dimensions not divisible by {tp_world_size}")
+                    print(f"Skipping {name}.{child_name}: dimensions not divisible by {tp_world_size} (in: {in_features}, out: {out_features})")
+                    skipped_count += 1
                     _replace_module(child, f"{name}.{child_name}")
                     continue
                 
@@ -213,7 +222,9 @@ def replace_with_pure_tensor_parallel(model, lossy_network):
                 
             elif isinstance(child, nn.Embedding):
                 # Replace embeddings with tensor parallel version
-                if child.embedding_dim % tp_world_size == 0:
+                # Only parallelize if embedding dimension is large enough and divisible
+                if (child.embedding_dim % tp_world_size == 0 and 
+                    child.embedding_dim >= tp_world_size * 32):  # Min 32 dims per rank
                     new_embedding = TensorParallelEmbedding(
                         child.num_embeddings, child.embedding_dim,
                         lossy_network=lossy_network
@@ -223,13 +234,14 @@ def replace_with_pure_tensor_parallel(model, lossy_network):
                     replaced_count += 1
                     print(f"Replaced {name}.{child_name} with TP embedding")
                 else:
-                    print(f"Skipping embedding {name}.{child_name}: dim not divisible")
+                    print(f"Skipping embedding {name}.{child_name}: dim {child.embedding_dim} not suitable for TP")
+                    skipped_count += 1
                     
             else:
                 _replace_module(child, f"{name}.{child_name}")
     
     _replace_module(model, "model")
-    print(f"Replaced {replaced_count} layers with pure tensor parallel versions")
+    print(f"Pure TP conversion complete: {replaced_count} layers replaced, {skipped_count} layers skipped")
     return model
 
 
@@ -367,7 +379,14 @@ def train_pure_tp_native(args):
     # Apply pure tensor parallelism
     print(f"[Rank {local_rank}] Applying pure tensor parallelism...")
     model = replace_with_pure_tensor_parallel(model, network)
-    model.to(torch.cuda.current_device())
+    
+    # Move model to appropriate device
+    if torch.cuda.is_available():
+        model.to(torch.cuda.current_device())
+        print(f"[Rank {local_rank}] Model moved to GPU {torch.cuda.current_device()}")
+    else:
+        model.to('cpu')
+        print(f"[Rank {local_rank}] Model running on CPU")
 
     # Data loading
     print(f"[Rank {local_rank}] Loading data...")
