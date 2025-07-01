@@ -125,28 +125,36 @@ class ColumnParallelLinear(nn.Module):
         # now W: [out_f, in_f]
 
         out_f, in_f = W.shape
-        assert in_f % world_size == 0
+        assert in_f % world_size == 0, f"Input features {in_f} not divisible by world_size {world_size}"
         self.local_in = in_f // world_size
 
         # shard the columns of W → weight_shard: [out_f, local_in]
         weight_shards = W.chunk(world_size, dim=1)
-        self.weight = nn.Parameter(weight_shards[group.rank()].clone())
+        rank = dist.get_rank(self.group)
+        self.weight = nn.Parameter(weight_shards[rank].clone())
 
         # bias stays full-size
         self.bias = nn.Parameter(B.clone()) if B is not None else None
 
     def forward(self, x: Tensor) -> Tensor:
-        # x: [batch, in_f] – slice out our input columns
-        start = self.local_in * self.group.rank()
-        end   = start + self.local_in
+        # For column parallel, we split the input and sum the partial results
+        # Each rank gets the full input but computes with its weight shard
+        
+        # Get current rank
+        rank = dist.get_rank(self.group)
+        
+        # Slice input according to our column shard
+        start = self.local_in * rank
+        end = start + self.local_in
         x_shard = x[:, start:end]                   # [batch, local_in]
 
-        # local matmul
+        # local matmul with our weight shard
         out = x_shard @ self.weight.t()             # [batch, out_f]
 
-        # sim / all_reduce over partials
+        # Sum partial results across all ranks
         dist.all_reduce(out, group=self.group)
 
+        # Add bias only once (after reduction)
         if self.bias is not None:
             out = out + self.bias
         return out
@@ -167,19 +175,28 @@ class RowParallelLinear(nn.Module):
 
         # now W: [out_f, in_f]
         out_f, in_f = W.shape
-        assert out_f % world_size == 0
+        assert out_f % world_size == 0, f"Output features {out_f} not divisible by world_size {world_size}"
         self.local_out = out_f // world_size
 
         # shard the rows → weight_shard: [local_out, in_f]
         weight_shards = W.chunk(world_size, dim=0)
-        self.weight = nn.Parameter(weight_shards[group.rank()].clone())
-        self.bias   = nn.Parameter(B.chunk(world_size, dim=0)[group.rank()].clone()) if B is not None else None
+        rank = dist.get_rank(self.group)
+        self.weight = nn.Parameter(weight_shards[rank].clone())
+        
+        # shard bias if it exists
+        if B is not None:
+            bias_shards = B.chunk(world_size, dim=0)
+            self.bias = nn.Parameter(bias_shards[rank].clone())
+        else:
+            self.bias = None
 
     def forward(self, x: Tensor) -> Tensor:
-        # local projection
+        # Each rank computes its output shard with full input
         out_shard = torch.nn.functional.linear(x, self.weight, self.bias)  # [batch, local_out]
 
-        # gather the shards across ranks
+        # Gather all shards from all ranks
         gathered = [torch.zeros_like(out_shard) for _ in range(self.world_size)]
         dist.all_gather(gathered, out_shard, group=self.group)
+        
+        # Concatenate along the output dimension
         return torch.cat(gathered, dim=-1)  # [batch, out_f]

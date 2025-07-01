@@ -1273,6 +1273,13 @@ def train_to_accuracy(args):
     dist.init_process_group(backend='gloo', init_method='env://')
     print(f"[Rank {local_rank}] world_size = {dist.get_world_size()}")
     world_size = args.tensor_parallel_size
+    
+    # Validate that actual world size matches expected tensor parallel size
+    actual_world_size = dist.get_world_size()
+    if actual_world_size != world_size:
+        print(f"Warning: actual world_size ({actual_world_size}) != tensor_parallel_size ({world_size})")
+        world_size = actual_world_size
+        
     group = dist.group.WORLD
 
     with open("src/config.yaml") as cf:
@@ -1342,7 +1349,7 @@ def train_to_accuracy(args):
     
     # Custom loss rate with Bursty Losses (GilbertElliot)
     if args.loss_type == 'ber':
-        network = LossyNetwork(args)
+        network = LossyNetwork(loss_rate=args.loss_rate)
     elif args.loss_type == 'g-e':
         import pandas as pd
         configs = pd.read_csv('g_e_params.csv')
@@ -1369,20 +1376,24 @@ def train_to_accuracy(args):
         for batch in tqdm(train_loader, desc=f"Rank {local_rank} Step {step}",
                           disable=(local_rank != 0)):
             batch = {k: v.to(model.device) for k, v in batch.items()}
-            loss = train_step(model, batch, optimizer, network)
-
+            
             if use_fp16:
+                # FP16 training path
+                model.train()
                 with autocast():
                     outputs = model(**batch)
                     loss = outputs.loss
                 scaler.scale(loss).backward()
                 for _, param in model.named_parameters():
-                    if param.grad is not None:
+                    if param.requires_grad and param.grad is not None:
                         mask = network.send(param.grad)
                         param.grad = network.receive(param.grad, mask)
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
+            else:
+                # Regular training path
+                loss = train_step(model, batch, optimizer, network)
 
             step += 1
 
