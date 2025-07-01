@@ -19,6 +19,7 @@ import wandb
 from comms import LossyNetwork, GillbertElliotLossyNetwork
 from data import get_dataset
 from tensor_parallel_with_lossy import replace_linear_with_tp_lossy
+from gpt2_attention_tp import replace_gpt2_attention_with_tp_lossy
 from transformers.models.gpt2.modeling_gpt2 import Conv1D
 
 
@@ -116,7 +117,10 @@ def train_to_accuracy(args):
     else:
         backbone = model
     
-    # Replace linear layers with tensor parallel + lossy versions
+    # First replace GPT2 attention layers with tensor parallel versions
+    replace_gpt2_attention_with_tp_lossy(backbone, group, network)
+    
+    # Then replace remaining linear layers (like MLP layers) with tensor parallel versions  
     replace_linear_with_tp_lossy(backbone, group, network, target_classes=(nn.Linear, Conv1D))
     print(f"Model after tensor parallelization:\n{backbone}")
     
