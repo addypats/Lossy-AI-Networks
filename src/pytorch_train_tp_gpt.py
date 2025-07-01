@@ -1214,30 +1214,28 @@ from transformers.models.gpt2.modeling_gpt2 import Conv1D
 
 def replace_linears(module, world_size, group):
     for name, child in list(module.named_children()):
-        # Match both pure Linear and GPT2's Conv1D
         if isinstance(child, (nn.Linear, Conv1D)):
-            # weight: either [out,in] (Linear) or [in,out] (Conv1D)
-            w = child.weight.data
+            # grab weight shape
+            W = child.weight.data
             if isinstance(child, Conv1D):
-                # Conv1D stores weight as [in, out]
-                in_f, out_f = w.shape
+                # Conv1D.weight is [in, out]
+                in_f, out_f = W.shape
             else:
-                # Linear stores weight as [out, in]
-                out_f, in_f = w.shape
+                # Linear.weight is [out, in]
+                out_f, in_f = W.shape
 
-            # now decide shard type
-            if in_f % world_size == 0:
-                wrapped = ColumnParallelLinear(child, world_size, group)
-            elif out_f % world_size == 0:
+            # **Row‐parallel first** (shard the output dim)
+            if out_f % world_size == 0:
                 wrapped = RowParallelLinear(child, world_size, group)
+            # else column‐parallel
+            elif in_f % world_size == 0:
+                wrapped = ColumnParallelLinear(child, world_size, group)
             else:
-                # can’t shard—skip
+                # neither dimension is divisible → leave it alone
                 continue
 
             setattr(module, name, wrapped)
-
         else:
-            # recurse into submodules
             replace_linears(child, world_size, group)
 
 def train_step(model, inputs, optimizer, network):
