@@ -228,6 +228,7 @@ class RowParallelLinear(nn.Module):
             print(f"Rank {dist.get_rank(self.group)}: all_gather failed with {e}")
             raise
         
+
         # Concatenate along the output dimension
         result = torch.cat(output_list, dim=-1)  # [batch, out_f]
         return result
