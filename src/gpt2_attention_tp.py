@@ -215,6 +215,8 @@ class TensorParallelGPT2Attention(GPT2Attention):
         encoder_attention_mask=None,
         use_cache=False,
         output_attentions=False,
+        past_key_value=None,  # Added to match GPT2 interface
+        **kwargs,  # Catch any other unexpected arguments
     ):
         if encoder_hidden_states is not None:
             if not hasattr(self, "q_attn"):
@@ -232,6 +234,9 @@ class TensorParallelGPT2Attention(GPT2Attention):
             query = self.q_proj(hidden_states)
             key = self.k_proj(hidden_states)
             value = self.v_proj(hidden_states)
+
+        # Handle both layer_past and past_key_value interfaces
+        layer_past = layer_past if layer_past is not None else past_key_value
 
         # Split heads for local computation
         query = self._split_heads(query, self.local_num_heads, self.head_dim)
