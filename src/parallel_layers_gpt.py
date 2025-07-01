@@ -48,6 +48,10 @@ class RowParallelLinear(nn.Module):
         # x: [batch, in_features]
         local_out = F.linear(x, self.weight, self.bias)  # [batch, out/world_size]
 
+        print("####################################################")
+        print("\nHello World\n")
+        print("####################################################")
+
         # gather local outputs from all ranks
         gathered = [torch.zeros_like(local_out) for _ in range(self.world_size)]
         dist.all_gather(gathered, local_out, group=self.group)
@@ -81,6 +85,10 @@ class ColumnParallelLinear(nn.Module):
         start = self.local_in * self.group.rank()
         end   = start + self.local_in
         x_shard = inputs[:, start:end]                   # [batch, local_in]
+
+        print("####################################################")
+        print("\nHello World\n")
+        print("####################################################")
 
         # local partial output
         out_shard = x_shard @ self.weight.t()             # [batch, out_f]

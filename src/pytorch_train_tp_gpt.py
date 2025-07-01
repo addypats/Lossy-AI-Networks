@@ -1183,6 +1183,7 @@ import wandb  # ← wandb import
 from comms import LossyNetwork, GillbertElliotLossyNetwork
 from data import get_dataset
 from parallel_layers_gpt import RowParallelLinear, ColumnParallelLinear
+from transformers.models.gpt2.modeling_gpt2 import Conv1D
 
 # Original replace_linears with only RowParallel
 # def replace_linears(module: nn.Module, world_size: int, group: dist.ProcessGroup):
@@ -1199,7 +1200,7 @@ from parallel_layers_gpt import RowParallelLinear, ColumnParallelLinear
 # New replace_linears with both
 def replace_linears(module, world_size, group):
     for name, child in list(module.named_children()):
-        if isinstance(child, nn.Linear):
+        if isinstance(child, (nn.Linear, Conv1D)):
             in_f, out_f = child.in_features, child.out_features
             if in_f % world_size == 0:
                 wrapped = ColumnParallelLinear(child, world_size, group)
@@ -1244,6 +1245,7 @@ def train_to_accuracy(args):
     torch.cuda.set_device(local_rank)
     # dist.init_process_group(backend='nccl', init_method='env://')
     dist.init_process_group(backend='gloo', init_method='env://')
+    print(f"[Rank {local_rank}] world_size = {dist.get_world_size()}")
     world_size = args.tensor_parallel_size
     group = dist.group.WORLD
 
@@ -1291,6 +1293,7 @@ def train_to_accuracy(args):
     else:
         backbone = model
     replace_linears(backbone, world_size, group)
+    print(backbone)
     model.to(torch.cuda.current_device())
 
     train_ds, eval_ds = get_dataset(args, tokenizer)
