@@ -112,6 +112,14 @@ def get_mnli(tokenizer, args):
     train_dataset = dataset["train"]
     eval_dataset = dataset["validation_matched"]  # Using matched validation set
 
+    # Apply max_samples limit if specified to speed up loading
+    if hasattr(args, 'max_samples') and args.max_samples > 0:
+        print(f"Limiting dataset to {args.max_samples} samples for faster testing")
+        train_dataset = train_dataset.select(range(min(args.max_samples, len(train_dataset))))
+        eval_dataset = eval_dataset.select(range(min(args.max_samples // 10, len(eval_dataset))))
+
+    print(f"Preprocessing {len(train_dataset)} training samples and {len(eval_dataset)} eval samples...")
+
     def preprocess(data):
         return {
             'input_ids': tokenizer(data["premise"], data["hypothesis"], truncation=True, padding="max_length", max_length=max_length)["input_ids"],
@@ -119,8 +127,11 @@ def get_mnli(tokenizer, args):
             'labels': data["label"]
         }
         
-    train_dataset = train_dataset.map(preprocess, remove_columns=["premise", "hypothesis", "idx", "label"])
-    eval_dataset = eval_dataset.map(preprocess, remove_columns=["premise", "hypothesis", "idx", "label"])
+    # Use multiprocessing and batching for faster preprocessing
+    train_dataset = train_dataset.map(preprocess, remove_columns=["premise", "hypothesis", "idx", "label"], 
+                                    num_proc=4, batch_size=1000, desc="Processing train data")
+    eval_dataset = eval_dataset.map(preprocess, remove_columns=["premise", "hypothesis", "idx", "label"], 
+                                   num_proc=4, batch_size=1000, desc="Processing eval data")
 
     return train_dataset, eval_dataset
 

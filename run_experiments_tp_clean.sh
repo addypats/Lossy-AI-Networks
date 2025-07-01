@@ -213,7 +213,7 @@ for iter in "${ITERATIONS[@]}"; do
         --loss_rate            0.001 \
               $fp_flag \
               --seed                 1234 \
-              --max_samples          0 \
+              --max_samples          1000 \
               --target_accuracy      0.75 \
               --eval_steps           20 \
               --patience             15 \

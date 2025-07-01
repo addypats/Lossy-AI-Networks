@@ -138,7 +138,15 @@ def train_to_accuracy(args):
     model.to(torch.cuda.current_device())
 
     # Data loading
+    print(f"[Rank {local_rank}] Starting data loading...")
+    start_data_time = time.time()
+    
     train_ds, eval_ds = get_dataset(args, tokenizer)
+    
+    data_load_time = time.time() - start_data_time
+    print(f"[Rank {local_rank}] Data loading completed in {data_load_time:.2f}s")
+    print(f"[Rank {local_rank}] Train dataset size: {len(train_ds)}, Eval dataset size: {len(eval_ds)}")
+    
     train_ds.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
     eval_ds.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
 
