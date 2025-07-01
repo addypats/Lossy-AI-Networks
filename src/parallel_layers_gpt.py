@@ -198,5 +198,6 @@ class RowParallelLinear(nn.Module):
         gathered = [torch.zeros_like(out_shard) for _ in range(self.world_size)]
         dist.all_gather(gathered, out_shard, group=self.group)
         
+
         # Concatenate along the output dimension
         return torch.cat(gathered, dim=-1)  # [batch, out_f]
