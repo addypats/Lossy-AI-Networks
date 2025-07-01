@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, Conv1D
-from .tensor_parallel_with_lossy import LinearShardedOutputsLossy, LinearShardedInputsLossy, LossyAllReduceFwdIdentityBwd
+from tensor_parallel_with_lossy import LinearShardedOutputsLossy, LinearShardedInputsLossy, LossyAllReduceFwdIdentityBwd
 
 
 class TensorParallelGPT2Attention(GPT2Attention):
