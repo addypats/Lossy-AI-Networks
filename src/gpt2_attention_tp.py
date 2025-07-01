@@ -243,7 +243,7 @@ class TensorParallelGPT2Attention(GPT2Attention):
         key = self._split_heads(key, self.local_num_heads, self.head_dim)
         value = self._split_heads(value, self.local_num_heads, self.head_dim)
 
-        if layer_past is not None:
+        if layer_past is not None and len(layer_past) == 2:
             past_key, past_value = layer_past
             key = torch.cat((past_key, key), dim=-2)
             value = torch.cat((past_value, value), dim=-2)
