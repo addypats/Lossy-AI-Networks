@@ -72,11 +72,16 @@ class TensorParallelGPT2Attention(GPT2Attention):
         local_num_heads = self.num_heads // world_size
         local_embed_dim = self.embed_dim // world_size  # This matches what LinearShardedOutputsLossy calculates
         
+        print(f"[CRITICAL] world_size={world_size}, group.size()={group.size()}")
+        print(f"[CRITICAL] embed_dim={self.embed_dim}, calculated local_embed_dim={local_embed_dim}")
+        
         self.q_proj = LinearShardedOutputsLossy(
             in_features, self.embed_dim, group, lossy_network,
             device=self.c_attn_original.weight.device, 
             dtype=self.c_attn_original.weight.dtype
         )
+        print(f"[CRITICAL] q_proj.out_features={self.q_proj.out_features}")
+        print(f"[CRITICAL] Expected: {self.embed_dim // group.size()}")
         self.k_proj = LinearShardedOutputsLossy(
             in_features, self.embed_dim, group, lossy_network,
             device=self.c_attn_original.weight.device,
@@ -234,6 +239,12 @@ class TensorParallelGPT2Attention(GPT2Attention):
             query = self.q_proj(hidden_states)
             key = self.k_proj(hidden_states)
             value = self.v_proj(hidden_states)
+            
+            # Debug: check output shapes
+            print(f"[Debug] hidden_states shape: {hidden_states.shape}")
+            print(f"[Debug] query shape: {query.shape}, expected: [batch, seq, {self.local_embed_dim}]")
+            print(f"[Debug] key shape: {key.shape}")
+            print(f"[Debug] value shape: {value.shape}")
 
         # Handle both layer_past and past_key_value interfaces
         layer_past = layer_past if layer_past is not None else past_key_value
