@@ -124,8 +124,15 @@ def train_to_accuracy(args):
     # Then replace GPT2 MLP layers with tensor parallel versions
     replace_gpt2_mlp_with_tp_lossy(backbone, group, network)
     
-    # Finally replace any remaining linear layers with tensor parallel versions  
-    replace_linear_with_tp_lossy(backbone, group, network, target_classes=(nn.Linear, Conv1D))
+    # Handle the classification head if it exists  
+    # Note: The score layer should NOT be tensor-parallelized because:
+    # 1. It receives full hidden states from the transformer (not sharded)
+    # 2. It's the final output layer that produces class logits  
+    # 3. Making it row-parallel would require sharded inputs which we don't have
+    if hasattr(model, 'score') and isinstance(model.score, nn.Linear):
+        print(f"Classification head found: {model.score}")
+        print("Keeping score layer as-is (not tensor-parallelized) for correct output handling")
+
     print(f"Model after tensor parallelization:\n{backbone}")
     
     model.to(torch.cuda.current_device())
