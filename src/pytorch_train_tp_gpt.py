@@ -1213,6 +1213,10 @@ from transformers.models.gpt2.modeling_gpt2 import Conv1D
 #             replace_linears(child, world_size, group)
 
 def replace_linears(module, world_size, group):
+    """
+    Replace linear layers with row-parallel versions only.
+    This ensures consistent tensor shapes throughout the model.
+    """
     for name, child in list(module.named_children()):
         if isinstance(child, (nn.Linear, Conv1D)):
             # grab weight shape
@@ -1224,17 +1228,14 @@ def replace_linears(module, world_size, group):
                 # Linear.weight is [out, in]
                 out_f, in_f = W.shape
 
-            # **Row‐parallel first** (shard the output dim)
+            # Only use row-parallel (shard the output dim) for consistency
             if out_f % world_size == 0:
                 wrapped = RowParallelLinear(child, world_size, group)
-            # else column‐parallel
-            elif in_f % world_size == 0:
-                wrapped = ColumnParallelLinear(child, world_size, group)
+                setattr(module, name, wrapped)
+                print(f"Parallelized layer {name}: [{out_f}, {in_f}] -> RowParallel")
             else:
-                # neither dimension is divisible → leave it alone
-                continue
+                print(f"Skipped layer {name}: output dim {out_f} not divisible by world_size {world_size}")
 
-            setattr(module, name, wrapped)
         else:
             replace_linears(child, world_size, group)
 

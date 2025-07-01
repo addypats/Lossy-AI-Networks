@@ -110,6 +110,11 @@ from transformers.models.gpt2.modeling_gpt2 import Conv1D
 from torch import Tensor
 
 class ColumnParallelLinear(nn.Module):
+    """
+    Column-parallel linear layer. 
+    Input is replicated across all ranks, weights are column-partitioned.
+    Output is summed across ranks via all-reduce.
+    """
     def __init__(self, orig, world_size, group):
         super().__init__()
         self.group = group
@@ -126,6 +131,8 @@ class ColumnParallelLinear(nn.Module):
 
         out_f, in_f = W.shape
         assert in_f % world_size == 0, f"Input features {in_f} not divisible by world_size {world_size}"
+        self.in_features = in_f
+        self.out_features = out_f
         self.local_in = in_f // world_size
 
         # shard the columns of W → weight_shard: [out_f, local_in]
@@ -133,34 +140,42 @@ class ColumnParallelLinear(nn.Module):
         rank = dist.get_rank(self.group)
         self.weight = nn.Parameter(weight_shards[rank].clone())
 
-        # bias stays full-size
-        self.bias = nn.Parameter(B.clone()) if B is not None else None
+        # bias stays full-size (only rank 0 should have it to avoid duplication)
+        if B is not None and rank == 0:
+            self.bias = nn.Parameter(B.clone())
+        else:
+            self.bias = None
 
     def forward(self, x: Tensor) -> Tensor:
-        # For column parallel, we split the input and sum the partial results
-        # Each rank gets the full input but computes with its weight shard
+        # Column parallel: input is replicated, each rank has partial weights
+        # x should have shape [batch, in_features] and be identical across all ranks
         
-        # Get current rank
         rank = dist.get_rank(self.group)
         
-        # Slice input according to our column shard
+        # Slice input to match our weight partition
         start = self.local_in * rank
         end = start + self.local_in
-        x_shard = x[:, start:end]                   # [batch, local_in]
+        x_local = x[:, start:end]  # [batch, local_in]
 
-        # local matmul with our weight shard
-        out = x_shard @ self.weight.t()             # [batch, out_f]
+        # Compute partial output
+        out = torch.matmul(x_local, self.weight.t())  # [batch, out_f]
 
-        # Sum partial results across all ranks
+        # All-reduce to sum partial results
         dist.all_reduce(out, group=self.group)
 
-        # Add bias only once (after reduction)
+        # Add bias only on rank 0 to avoid duplication
         if self.bias is not None:
             out = out + self.bias
+            
         return out
 
 
 class RowParallelLinear(nn.Module):
+    """
+    Row-parallel linear layer.
+    Input is replicated across all ranks, weights are row-partitioned.
+    Output is gathered from all ranks via all-gather.
+    """
     def __init__(self, orig, world_size, group):
         super().__init__()
         self.group = group
@@ -176,6 +191,8 @@ class RowParallelLinear(nn.Module):
         # now W: [out_f, in_f]
         out_f, in_f = W.shape
         assert out_f % world_size == 0, f"Output features {out_f} not divisible by world_size {world_size}"
+        self.in_features = in_f
+        self.out_features = out_f
         self.local_out = out_f // world_size
 
         # shard the rows → weight_shard: [local_out, in_f]
@@ -191,12 +208,26 @@ class RowParallelLinear(nn.Module):
             self.bias = None
 
     def forward(self, x: Tensor) -> Tensor:
+        # Row parallel: input is replicated, each rank computes partial output
+        # x should have shape [batch, in_features] and be identical across all ranks
+        
+        # Validate input shape
+        expected_shape = (x.size(0), self.in_features)
+        if x.shape != expected_shape:
+            raise RuntimeError(f"RowParallel input shape mismatch: got {x.shape}, expected {expected_shape}")
+        
         # Each rank computes its output shard with full input
         out_shard = torch.nn.functional.linear(x, self.weight, self.bias)  # [batch, local_out]
 
-        # Gather all shards from all ranks
-        gathered = [torch.zeros_like(out_shard) for _ in range(self.world_size)]
-        dist.all_gather(gathered, out_shard, group=self.group)
+        # Gather all shards from all ranks - this is the critical communication step
+        output_list = [torch.zeros_like(out_shard) for _ in range(self.world_size)]
+        
+        try:
+            dist.all_gather(output_list, out_shard, group=self.group)
+        except Exception as e:
+            print(f"Rank {dist.get_rank(self.group)}: all_gather failed with {e}")
+            raise
         
         # Concatenate along the output dimension
-        return torch.cat(gathered, dim=-1)  # [batch, out_f]
+        result = torch.cat(output_list, dim=-1)  # [batch, out_f]
+        return result
