@@ -164,10 +164,10 @@ def replace_linear_with_tp_lossy(module, group, lossy_network, target_classes=(n
     """
     from transformers.models.gpt2.modeling_gpt2 import Conv1D
     
-    # Skip if this module is already a TensorParallelGPT2Attention
+    # Skip if this module is already a TensorParallelGPT2Attention or GPT2MLP
     # Check by class name to avoid circular import issues
-    if type(module).__name__ == 'TensorParallelGPT2Attention':
-        print(f"Skipping TensorParallelGPT2Attention - already tensor parallel")
+    if type(module).__name__ in ['TensorParallelGPT2Attention', 'GPT2MLP', 'TensorParallelGPT2MLP']:
+        print(f"Skipping {type(module).__name__} - already tensor parallel or handled separately")
         return
     
     for name, child in list(module.named_children()):
@@ -236,6 +236,87 @@ def replace_linear_with_tp_lossy(module, group, lossy_network, target_classes=(n
             setattr(module, name, new_layer)
             print(f"Replaced {name} with tensor parallel version: {in_features}x{out_features}")
         else:
-            # Don't recursively process children of TensorParallelGPT2Attention
-            if type(child).__name__ != 'TensorParallelGPT2Attention':
+            # Don't recursively process children of TensorParallelGPT2Attention or GPT2MLP
+            if type(child).__name__ not in ['TensorParallelGPT2Attention', 'GPT2MLP', 'TensorParallelGPT2MLP']:
                 replace_linear_with_tp_lossy(child, group, lossy_network, target_classes)
+
+
+def replace_gpt2_mlp_with_tp_lossy(module, group, lossy_network):
+    """
+    Replace GPT2 MLP layers with tensor parallel versions.
+    GPT2 MLP has:
+    - c_fc: Conv1D that expands from hidden_size to intermediate_size (column-parallel)
+    - c_proj: Conv1D that contracts from intermediate_size to hidden_size (row-parallel)
+    """
+    from transformers.models.gpt2.modeling_gpt2 import Conv1D
+    
+    for name, child in list(module.named_children()):
+        # Check if this is a GPT2MLP module
+        if type(child).__name__ == 'GPT2MLP':
+            print(f"Found GPT2MLP at {name}, replacing with tensor parallel version")
+            
+            # Get the original layers
+            c_fc = child.c_fc
+            c_proj = child.c_proj
+            act = child.act
+            dropout = child.dropout
+            
+            # c_fc: Conv1D(nf=intermediate_size, nx=hidden_size) - column parallel
+            hidden_size, intermediate_size = c_fc.weight.shape  # Conv1D stores as [nx, nf]
+            print(f"c_fc dimensions: {hidden_size} -> {intermediate_size}")
+            
+            # Create column-parallel c_fc (shard outputs)
+            new_c_fc = LinearShardedOutputsLossy(
+                hidden_size, intermediate_size, group, lossy_network,
+                device=c_fc.weight.device, dtype=c_fc.weight.dtype
+            )
+            
+            # Copy c_fc weights
+            rank = dist.get_rank(group)
+            shard_size = intermediate_size // group.size()
+            start_idx = rank * shard_size
+            end_idx = start_idx + shard_size
+            
+            # Conv1D weight is [nx, nf], need to transpose for Linear format [nf, nx]
+            weight_transposed = c_fc.weight.data.transpose(0, 1)  # [nf, nx] = [intermediate, hidden]
+            new_c_fc.weight.data.copy_(weight_transposed[start_idx:end_idx])
+            if c_fc.bias is not None:
+                new_c_fc.bias.data.copy_(c_fc.bias.data[start_idx:end_idx])
+            
+            # Create row-parallel c_proj (shard inputs)
+            new_c_proj = LinearShardedInputsLossy(
+                intermediate_size, hidden_size, group, lossy_network,
+                device=c_proj.weight.device, dtype=c_proj.weight.dtype
+            )
+            
+            # Copy c_proj weights
+            # Conv1D weight is [nx, nf], need to transpose for Linear format [nf, nx]
+            weight_transposed = c_proj.weight.data.transpose(0, 1)  # [nf, nx] = [hidden, intermediate]
+            new_c_proj.weight.data.copy_(weight_transposed[:, start_idx:end_idx])
+            if c_proj.bias is not None:
+                new_c_proj.bias.data.copy_(c_proj.bias.data)
+                
+            # Create a new MLP module with tensor parallel layers
+            class TensorParallelGPT2MLP(nn.Module):
+                def __init__(self):
+                    super().__init__()
+                    self.c_fc = new_c_fc
+                    self.c_proj = new_c_proj
+                    self.act = act
+                    self.dropout = dropout
+                    
+                def forward(self, x):
+                    x = self.c_fc(x)
+                    x = self.act(x)
+                    x = self.c_proj(x)
+                    x = self.dropout(x)
+                    return x
+            
+            # Replace the MLP
+            setattr(module, name, TensorParallelGPT2MLP())
+            print(f"Replaced GPT2MLP {name} with tensor parallel version")
+            
+        else:
+            # Recursively process children, but skip TensorParallelGPT2Attention
+            if type(child).__name__ != 'TensorParallelGPT2Attention':
+                replace_gpt2_mlp_with_tp_lossy(child, group, lossy_network)
