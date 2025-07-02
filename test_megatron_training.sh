@@ -19,9 +19,9 @@ export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12355
 
 # Test configuration
-# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export CUDA_VISIBLE_DEVICES=0,1  # For testing with 2 GPUs
-TP_SIZE=2
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# export CUDA_VISIBLE_DEVICES=0,1  # For testing with 2 GPUs
+TP_SIZE=8
 DATASET="mnli"
 MODEL_NAME="gpt2-large"
 
@@ -32,6 +32,8 @@ echo "Dataset: $DATASET"
 echo "Model: $MODEL_NAME"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo ""
+
+ge_config_var=("long_1percent")
 
 # Test 1: Bernoulli loss (your standard uniform loss)
 echo "🔬 Test 1: Bernoulli (uniform) loss simulation"
@@ -74,7 +76,7 @@ $TORCHRUN \
   src/train_megatron_lossy.py \
     --tensor_parallel_size $TP_SIZE \
     --loss_type            g-e \
-    --ge_config            zero \
+    --ge_config            $ge_config_var \
     --model_name           $MODEL_NAME \
     --dataset              $DATASET \
     --batch_size           8 \

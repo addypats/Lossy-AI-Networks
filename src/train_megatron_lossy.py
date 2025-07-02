@@ -221,18 +221,20 @@ def setup_lossy_network(args):
         # Load Gilbert-Elliott parameters from CSV
         import pandas as pd
         try:
-            ge_params = pd.read_csv('g_e_params.csv')
-            config_row = ge_params[ge_params['config_id'] == args.ge_config]
+            ge_params = pd.read_csv('g_e_params.csv', skipinitialspace=True)
+            config_row = ge_params[ge_params['id'] == args.ge_config]
             if config_row.empty:
                 raise ValueError(f"G-E config '{args.ge_config}' not found in g_e_params.csv")
             
-            p_gb = float(config_row['p_gb'].iloc[0])
-            p_bg = float(config_row['p_bg'].iloc[0])
-            good_loss_rate = float(config_row['good_loss_rate'].iloc[0])
-            bad_loss_rate = float(config_row['bad_loss_rate'].iloc[0])
+            p_gb = float(config_row['pgb'].iloc[0])
+            p_bg = float(config_row['pbg'].iloc[0])
+            good_loss_rate = float(config_row['lrg'].iloc[0])
+            bad_loss_rate = float(config_row['lrb'].iloc[0])
             
             network = GillbertElliotLossyNetwork(p_gb, p_bg, good_loss_rate, bad_loss_rate, args)
-            print(f"✅ Using Gilbert-Elliott network: config={args.ge_config}, p_gb={p_gb}, p_bg={p_bg}")
+            
+            # print(f"✅ Using Gilbert-Elliott network: config={args.ge_config}, p_gb={p_gb}, p_bg={p_bg}")
+            print(f"✅ Using Gilbert-Elliott network: config={args.ge_config}, p_gb={p_gb}, p_bg={p_bg}, good_lr={good_loss_rate}, bad_lr={bad_loss_rate}")
             
         except Exception as e:
             print(f"⚠️ Failed to load G-E config: {e}, falling back to Bernoulli")

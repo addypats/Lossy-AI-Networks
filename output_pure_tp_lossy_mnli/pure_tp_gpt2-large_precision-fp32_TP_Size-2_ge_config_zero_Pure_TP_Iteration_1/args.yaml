@@ -4,14 +4,13 @@ eval_steps: 20
 fp16: false
 ge_config: zero
 learning_rate: 3.0e-05
-local_rank: 0
 loss_rate: 0.001
 loss_type: g-e
 max_length: 128
-max_samples: 0
+max_samples: 2000
 max_steps: 500
 model_name: gpt2-large
-output_dir: output_gpt2-large_BurstyLosses_mnli/target_steps_tp_gpt2-large_precision-fp32_Num_Nodes-2_ge_config_zero_Long_Burst_Loss_Iteration_1
+output_dir: output_pure_tp_lossy_mnli/pure_tp_gpt2-large_precision-fp32_TP_Size-2_ge_config_zero_Pure_TP_Iteration_1
 patience: 15
 seed: 1234
 target_accuracy: 0.75
