@@ -66,15 +66,38 @@ def setup_megatron_if_available(tensor_parallel_size):
     return False
 
 
-def replace_linears_megatron(module, world_size):
+def inspect_model_structure(module, prefix="", max_depth=3, current_depth=0):
+    """Inspect model structure to see what layers exist."""
+    if current_depth >= max_depth:
+        return
+    
+    for name, child in module.named_children():
+        full_name = f"{prefix}.{name}" if prefix else name
+        if isinstance(child, nn.Linear):
+            print(f"   📐 {full_name}: nn.Linear({child.in_features}, {child.out_features})")
+        elif hasattr(child, 'weight') and len(child.weight.shape) == 2:
+            print(f"   📐 {full_name}: {type(child).__name__}{tuple(child.weight.shape)}")
+        else:
+            print(f"   📦 {full_name}: {type(child).__name__}")
+            if current_depth < max_depth - 1:
+                inspect_model_structure(child, full_name, max_depth, current_depth + 1)
+
+
+def replace_linears_megatron(module, world_size, path=""):
     """Replace linear layers with Megatron tensor parallel versions."""
+    replacement_count = 0
+    
     for name, child in list(module.named_children()):
+        current_path = f"{path}.{name}" if path else name
+        
         if isinstance(child, nn.Linear):
             in_features = child.in_features
             out_features = child.out_features
+            print(f"🔍 Found nn.Linear at {current_path}: {in_features} -> {out_features}")
             
             # Use row-parallel for layers where output can be sharded
             if out_features % world_size == 0:
+                print(f"✅ Output dimension {out_features} is divisible by world_size {world_size}, creating RowParallel...")
                 # Create Megatron row-parallel linear
                 device = child.weight.device
                 dtype = child.weight.dtype
@@ -103,9 +126,11 @@ def replace_linears_megatron(module, world_size):
                         new_layer.bias.copy_(child.bias[start_idx:end_idx])
                 
                 setattr(module, name, new_layer)
-                print(f"✅ Replaced {name} with Megatron RowParallelLinear: {out_features} -> {output_size_per_partition}")
+                replacement_count += 1
+                print(f"✅ Replaced {current_path} with Megatron RowParallelLinear: {out_features} -> {output_size_per_partition}")
             
             elif in_features % world_size == 0:
+                print(f"✅ Input dimension {in_features} is divisible by world_size {world_size}, creating ColumnParallel...")
                 # Create Megatron column-parallel linear for input sharding
                 device = child.weight.device
                 dtype = child.weight.dtype
@@ -132,11 +157,16 @@ def replace_linears_megatron(module, world_size):
                         new_layer.bias.copy_(child.bias)
                 
                 setattr(module, name, new_layer)
-                print(f"✅ Replaced {name} with Megatron ColumnParallelLinear: {in_features} -> {input_size_per_partition}")
+                replacement_count += 1
+                print(f"✅ Replaced {current_path} with Megatron ColumnParallelLinear: {in_features} -> {input_size_per_partition}")
             else:
-                print(f"⚠️ Skipped {name}: neither dimension divisible by world_size {world_size}")
+                print(f"⚠️ Skipped {current_path}: neither input ({in_features}) nor output ({out_features}) divisible by world_size {world_size}")
         else:
-            replace_linears_megatron(child, world_size)
+            # Recurse into child modules
+            child_replacements = replace_linears_megatron(child, world_size, current_path)
+            replacement_count += child_replacements
+    
+    return replacement_count
 
 
 def replace_linears_custom(module, world_size, group):
@@ -221,20 +251,18 @@ def setup_lossy_network(args):
         # Load Gilbert-Elliott parameters from CSV
         import pandas as pd
         try:
-            ge_params = pd.read_csv('g_e_params.csv', skipinitialspace=True)
-            config_row = ge_params[ge_params['id'] == args.ge_config]
+            ge_params = pd.read_csv('g_e_params.csv')
+            config_row = ge_params[ge_params['config_id'] == args.ge_config]
             if config_row.empty:
                 raise ValueError(f"G-E config '{args.ge_config}' not found in g_e_params.csv")
             
-            p_gb = float(config_row['pgb'].iloc[0])
-            p_bg = float(config_row['pbg'].iloc[0])
-            good_loss_rate = float(config_row['lrg'].iloc[0])
-            bad_loss_rate = float(config_row['lrb'].iloc[0])
+            p_gb = float(config_row['p_gb'].iloc[0])
+            p_bg = float(config_row['p_bg'].iloc[0])
+            good_loss_rate = float(config_row['good_loss_rate'].iloc[0])
+            bad_loss_rate = float(config_row['bad_loss_rate'].iloc[0])
             
             network = GillbertElliotLossyNetwork(p_gb, p_bg, good_loss_rate, bad_loss_rate, args)
-            
-            # print(f"✅ Using Gilbert-Elliott network: config={args.ge_config}, p_gb={p_gb}, p_bg={p_bg}")
-            print(f"✅ Using Gilbert-Elliott network: config={args.ge_config}, p_gb={p_gb}, p_bg={p_bg}, good_lr={good_loss_rate}, bad_lr={bad_loss_rate}")
+            print(f"✅ Using Gilbert-Elliott network: config={args.ge_config}, p_gb={p_gb}, p_bg={p_bg}")
             
         except Exception as e:
             print(f"⚠️ Failed to load G-E config: {e}, falling back to Bernoulli")
@@ -308,15 +336,31 @@ def train_to_accuracy(args):
     # Setup tensor parallelism
     if hasattr(model, 'model'):
         backbone = model.model
+        backbone_name = "model.model"
     elif hasattr(model, 'transformer'):
         backbone = model.transformer
+        backbone_name = "model.transformer"
     else:
         backbone = model
+        backbone_name = "model"
+    
+    print(f"🏗️ Model structure analysis:")
+    print(f"   - Backbone: {backbone_name}")
+    print(f"   - Backbone type: {type(backbone)}")
+    print(f"   - World size: {args.tensor_parallel_size}")
+    print(f"   - Using Megatron: {use_megatron}")
+    
+    print(f"\n🔍 Model layer inspection:")
+    inspect_model_structure(backbone)
     
     if use_megatron:
-        replace_linears_megatron(backbone, args.tensor_parallel_size)
+        print(f"\n🔧 Starting Megatron layer replacement...")
+        replacements = replace_linears_megatron(backbone, args.tensor_parallel_size)
+        print(f"✅ Megatron replacement complete: {replacements} layers replaced")
     else:
+        print(f"\n🔧 Starting custom layer replacement...")
         replace_linears_custom(backbone, args.tensor_parallel_size, group)
+        print(f"✅ Custom replacement complete")
     
     model.to(torch.cuda.current_device())
     
