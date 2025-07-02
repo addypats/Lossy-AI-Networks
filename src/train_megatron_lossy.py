@@ -76,7 +76,12 @@ def inspect_model_structure(module, prefix="", max_depth=3, current_depth=0):
         if isinstance(child, nn.Linear):
             print(f"   📐 {full_name}: nn.Linear({child.in_features}, {child.out_features})")
         elif hasattr(child, 'weight') and len(child.weight.shape) == 2:
-            print(f"   📐 {full_name}: {type(child).__name__}{tuple(child.weight.shape)}")
+            weight_shape = tuple(child.weight.shape)
+            layer_type = type(child).__name__
+            if layer_type == 'Conv1D':
+                print(f"   � {full_name}: {layer_type}{weight_shape} [GPT2 linear layer]")
+            else:
+                print(f"   📐 {full_name}: {layer_type}{weight_shape}")
         else:
             print(f"   📦 {full_name}: {type(child).__name__}")
             if current_depth < max_depth - 1:
