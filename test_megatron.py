@@ -5,17 +5,17 @@ from torch.utils.data import DataLoader
 from functools import partial
 from pathlib import Path
 
-from Megatron-LM.megatron.core import parallel_state
-from Megatron-LM.megatron.core import dist_checkpointing
-from Megatron-LM.megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from Megatron-LM.megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from Megatron-LM.megatron.core.transformer.transformer_config import TransformerConfig
-from Megatron-LM.megatron.core.models.gpt.gpt_model import GPTModel
-from Megatron-LM.megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_local_spec
-from Megatron-LM.megatron.core.datasets.utils import compile_helpers 
-from Megatron-LM.megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
-from Megatron-LM.megatron.core.datasets.gpt_dataset import GPTDatasetConfig, MockGPTDataset
-from Megatron-LM.megatron.training.tokenizer.tokenizer import _NullTokenizer
+from megatron.core import parallel_state
+from megatron.core import dist_checkpointing
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_local_spec
+from megatron.core.datasets.utils import compile_helpers 
+from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
+from megatron.core.datasets.gpt_dataset import GPTDatasetConfig, MockGPTDataset
+from megatron.training.tokenizer.tokenizer import _NullTokenizer
 
 
 _SEQUENCE_LENGTH = 64
