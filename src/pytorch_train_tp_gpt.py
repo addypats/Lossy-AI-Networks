@@ -1186,15 +1186,15 @@ from parallel_layers_gpt import RowParallelLinear, ColumnParallelLinear
 from transformers.models.gpt2.modeling_gpt2 import Conv1D
 
 # Original replace_linears with only RowParallel
-# def replace_linears(module: nn.Module, world_size: int, group: dist.ProcessGroup):
-#     for name, child in list(module.named_children()):
-#         if isinstance(child, nn.Linear):
-#             out_f = child.out_features
-#             if out_f % world_size == 0:
-#                 wrapped = RowParallelLinear(child, world_size, group)
-#                 setattr(module, name, wrapped)
-#         else:
-#             replace_linears(child, world_size, group)
+def replace_linears(module: nn.Module, world_size: int, group: dist.ProcessGroup):
+    for name, child in list(module.named_children()):
+        if isinstance(child, nn.Linear):
+            out_f = child.out_features
+            if out_f % world_size == 0:
+                wrapped = RowParallelLinear(child, world_size, group)
+                setattr(module, name, wrapped)
+        else:
+            replace_linears(child, world_size, group)
 
 
 # New replace_linears with both
@@ -1212,32 +1212,32 @@ from transformers.models.gpt2.modeling_gpt2 import Conv1D
 #         else:
 #             replace_linears(child, world_size, group)
 
-def replace_linears(module, world_size, group):
-    """
-    Replace linear layers with row-parallel versions only.
-    This ensures consistent tensor shapes throughout the model.
-    """
-    for name, child in list(module.named_children()):
-        if isinstance(child, (nn.Linear, Conv1D)):
-            # grab weight shape
-            W = child.weight.data
-            if isinstance(child, Conv1D):
-                # Conv1D.weight is [in, out]
-                in_f, out_f = W.shape
-            else:
-                # Linear.weight is [out, in]
-                out_f, in_f = W.shape
+# def replace_linears(module, world_size, group):
+#     """
+#     Replace linear layers with row-parallel versions only.
+#     This ensures consistent tensor shapes throughout the model.
+#     """
+#     for name, child in list(module.named_children()):
+#         if isinstance(child, (nn.Linear, Conv1D)):
+#             # grab weight shape
+#             W = child.weight.data
+#             if isinstance(child, Conv1D):
+#                 # Conv1D.weight is [in, out]
+#                 in_f, out_f = W.shape
+#             else:
+#                 # Linear.weight is [out, in]
+#                 out_f, in_f = W.shape
 
-            # Only use row-parallel (shard the output dim) for consistency
-            if out_f % world_size == 0:
-                wrapped = RowParallelLinear(child, world_size, group)
-                setattr(module, name, wrapped)
-                print(f"Parallelized layer {name}: [{out_f}, {in_f}] -> RowParallel")
-            else:
-                print(f"Skipped layer {name}: output dim {out_f} not divisible by world_size {world_size}")
+#             # Only use row-parallel (shard the output dim) for consistency
+#             if out_f % world_size == 0:
+#                 wrapped = RowParallelLinear(child, world_size, group)
+#                 setattr(module, name, wrapped)
+#                 print(f"Parallelized layer {name}: [{out_f}, {in_f}] -> RowParallel")
+#             else:
+#                 print(f"Skipped layer {name}: output dim {out_f} not divisible by world_size {world_size}")
 
-        else:
-            replace_linears(child, world_size, group)
+#         else:
+#             replace_linears(child, world_size, group)
 
 def train_step(model, inputs, optimizer, network):
     model.train()
@@ -1361,7 +1361,7 @@ def train_to_accuracy(args):
     else:
         backbone = model
     replace_linears(backbone, world_size, group)
-    print(backbone)
+    # print(backbone)
     model.to(torch.cuda.current_device())
 
     train_ds, eval_ds = get_dataset(args, tokenizer)
