@@ -1254,18 +1254,42 @@ def train_step(model, inputs, optimizer, network):
     optimizer.zero_grad()
     return loss.item()
 
+# def evaluate(model, eval_loader, device):
+#     model.eval()
+#     all_preds, all_labels = [], []
+#     with torch.no_grad():
+#         for batch in eval_loader:
+#             batch = {k: v.to(device) for k, v in batch.items()}
+#             logits = model(**batch).logits
+#             preds = torch.argmax(logits, dim=-1).cpu().numpy()
+#             labels = batch['labels'].cpu().numpy()
+#             all_preds.extend(preds)
+#             all_labels.extend(labels)
+#     return accuracy_score(all_labels, all_preds)
+
 def evaluate(model, eval_loader, device):
     model.eval()
     all_preds, all_labels = [], []
+    all_losses = []
+    loss_fn = nn.CrossEntropyLoss()
+
     with torch.no_grad():
         for batch in eval_loader:
             batch = {k: v.to(device) for k, v in batch.items()}
-            logits = model(**batch).logits
+            outputs = model(**batch)
+            logits = outputs.logits
+            labels = batch['labels']
+            loss = loss_fn(logits, labels)
+            all_losses.append(loss.item())
+
             preds = torch.argmax(logits, dim=-1).cpu().numpy()
-            labels = batch['labels'].cpu().numpy()
             all_preds.extend(preds)
-            all_labels.extend(labels)
-    return accuracy_score(all_labels, all_preds)
+            all_labels.extend(labels.cpu().numpy())
+
+    avg_loss = np.mean(all_losses)
+    perplexity = np.exp(avg_loss)
+    accuracy = accuracy_score(all_labels, all_preds)
+    return accuracy, avg_loss, perplexity
 
 def train_to_accuracy(args):
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -1299,13 +1323,23 @@ def train_to_accuracy(args):
     metrics = []
 
     # — wandb initialization —
-    if local_rank == 0:
+    # if local_rank == 0:
+    #     run_id = os.path.basename(os.path.abspath(args.output_dir))
+    #     wandb.init(
+    #         project="your_project_name",  # ← Replace with your actual project name
+    #         name=run_id,
+    #         config=vars(args)
+    #     )
+    if local_rank == 0 and args.wandb:
         run_id = os.path.basename(os.path.abspath(args.output_dir))
         wandb.init(
-            project="your_project_name",  # ← Replace with your actual project name
+            project="your_project_name",
             name=run_id,
-            config=vars(args)
+            config=vars(args),
+            tags=[args.model_name, args.dataset, args.loss_type],
+            group=args.dataset
         )
+
 
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_name, num_labels=num_labels, use_auth_token=True
@@ -1398,18 +1432,56 @@ def train_to_accuracy(args):
 
             step += 1
 
+            # ----------- TRAINING METRIC LOGGING --------------
+            if local_rank == 0 and args.wandb:
+                current_lr = optimizer.param_groups[0]['lr']
+                total_grad_norm = 0.0
+                count = 0
+                for _, param in model.named_parameters():
+                    if param.grad is not None:
+                        total_grad_norm += param.grad.data.norm(2).item() ** 2
+                        count += 1
+                grad_norm = (total_grad_norm ** 0.5) if count > 0 else 0.0
+
+                wandb.log({
+                    'train/loss': loss.item() if not use_fp16 else loss.detach().cpu().item(),
+                    'train/grad_norm': grad_norm,
+                    'train/learning_rate': current_lr,
+                    'train/step': step
+                })
+            # --------------------------------------------------
+
+
             if step % args.eval_steps == 0:
                 stop_signal = torch.zeros(1, dtype=torch.uint8, device=model.device)
 
                 if local_rank == 0:
-                    acc = evaluate(model, eval_loader, model.device)
+                    # acc = evaluate(model, eval_loader, model.device)
+                    acc, val_loss, perplexity = evaluate(model, eval_loader, model.device)
                     elapsed = time.time() - start
                     line = f"Step {step} | Acc {acc:.4f} | Time {elapsed:.1f}s"
                     print(line)
                     log_f.write(line + "\n")
                     log_f.flush()
-                    metrics.append({'step': step, 'accuracy': acc, 'time': elapsed})
-                    wandb.log({'accuracy': acc, 'step': step, 'time': elapsed})
+                    # metrics.append({'step': step, 'accuracy': acc, 'time': elapsed})
+                    # wandb.log({'accuracy': acc, 'step': step, 'time': elapsed})
+                    
+                    metrics.append({
+                        'step': step,
+                        'accuracy': acc,
+                        'loss': val_loss,
+                        'perplexity': perplexity,
+                        'time': elapsed
+                    })
+                    if args.wandb and local_rank == 0:
+                        wandb.log({
+                            'eval/accuracy': acc,
+                            'eval/loss': val_loss,
+                            'eval/perplexity': perplexity,
+                            'eval/step': step,
+                            'eval/time': elapsed
+                        })
+
                     
                     # Update list of last 5 accuracies
                     last_accuracies.append(acc)
@@ -1521,6 +1593,7 @@ if __name__ == "__main__":
     parser.add_argument('--patience', type=int, default=3)
     parser.add_argument('--max_steps', type=int, default=100000)
     parser.add_argument('--output_dir', type=str, default='./output')
+    parser.add_argument('--wandb', action='store_true', help="Enable Weights & Biases logging")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
