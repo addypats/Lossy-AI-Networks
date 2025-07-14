@@ -48,24 +48,24 @@ export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=12355
 
 # GPUs to use
-export CUDA_VISIBLE_DEVICES=0,1
-# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# export CUDA_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
 # export CUDA_VISIBLE_DEVICES=1,2
 
 # Tensor-parallel world size
 # TP_SIZE=(2 4 8)
-TP_SIZE=(2)
+TP_SIZE=(8)
 
 # GilbertElliot Loss Model params
 # GE_CONFIG=("default" "one" "one_precent" "half_percent" "point2_percent")
-# GE_CONFIG=("long_1percent" "long_half_percent" "long_point2_percent" "long_point1_percent")
+GE_CONFIG=("long_1percent" "long_half_percent" "long_point2_percent" "long_point1_percent")
 # GE_CONFIG=("one_precent" "half_percent" "point2_percent")
 # GE_CONFIG=("default" "one_precent" "half_percent")
 # GE_CONFIG=("zero" "short_1percent" "short_half_percent" "short_point_2percent" "short_point1_percent")
 # GE_CONFIG=("long_point1_percent")
 # GE_CONFIG=("zero" "ber_20" "long_50percent" "90_loss")
-GE_CONFIG=("zero")
+# GE_CONFIG=("zero")
 
 # Loss-rate grid
 LOSS_RATES=(0.001 0.002 0.005 0.01)
@@ -86,8 +86,8 @@ ITERATIONS=(1)
 
 # Ensure output directory exists
 # mkdir -p output_Llama3.2-1B
-# mkdir -p output_gpt2-large_BurstyLosses_mnli
-mkdir -p output_gpt2-large_uniform_Bernoulli_Losses_mnli
+mkdir -p output_gpt2-large_BurstyLosses_mnli
+# mkdir -p output_gpt2-large_uniform_Bernoulli_Losses_mnli
 
 
 # Running script for uniform loss with loss rates like the previous ones - used for bernoulli' (The standard loss rate function)
@@ -147,6 +147,7 @@ mkdir -p output_gpt2-large_uniform_Bernoulli_Losses_mnli
 #               --eval_steps           20 \
 #               --patience             10 \
 #               --max_steps            500 \
+#		--wandb
 #               --output_dir           "output_gpt2-large_uniform_Bernoulli_Losses_sst2/$run_id" \
 
 #           echo "=== Completed $run_id ==="
@@ -218,7 +219,8 @@ for iter in "${ITERATIONS[@]}"; do
               --eval_steps           20 \
               --patience             15 \
               --max_steps            500 \
-              --output_dir           "output_gpt2-large_BurstyLosses_mnli/$run_id" \
+	      --wandb
+ 	      --output_dir           "output_gpt2-large_BurstyLosses_mnli/$run_id" \
 
           echo "=== Completed $run_id ==="
           echo

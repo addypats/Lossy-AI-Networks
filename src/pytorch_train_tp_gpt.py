@@ -1182,7 +1182,8 @@ import wandb  # ← wandb import
 
 from comms import LossyNetwork, GillbertElliotLossyNetwork
 from data import get_dataset
-from parallel_layers_gpt import RowParallelLinear, ColumnParallelLinear
+# from parallel_layers_gpt import RowParallelLinear, ColumnParallelLinear
+from parallel_layers_gpt import RowParallelLinear
 from transformers.models.gpt2.modeling_gpt2 import Conv1D
 
 # Original replace_linears with only RowParallel
@@ -1443,8 +1444,13 @@ def train_to_accuracy(args):
                         count += 1
                 grad_norm = (total_grad_norm ** 0.5) if count > 0 else 0.0
 
+                if isinstance(loss, torch.Tensor):
+                    train_loss = loss.detach().cpu().item()
+                else:
+                    train_loss = float(loss)
+
                 wandb.log({
-                    'train/loss': loss.item() if not use_fp16 else loss.detach().cpu().item(),
+                    'train/loss': train_loss,
                     'train/grad_norm': grad_norm,
                     'train/learning_rate': current_lr,
                     'train/step': step
