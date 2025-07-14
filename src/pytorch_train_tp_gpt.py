@@ -1385,7 +1385,7 @@ def train_to_accuracy(args):
     
     # Custom loss rate with Bursty Losses (GilbertElliot)
     if args.loss_type == 'ber':
-        network = LossyNetwork(loss_rate=args.loss_rate)
+        network = LossyNetwork(args=args)
     elif args.loss_type == 'g-e':
         import pandas as pd
         configs = pd.read_csv('g_e_params.csv')
