@@ -129,7 +129,6 @@
 
 
 # Original Pegah's code
-
 from comms import LossyNetwork, GillbertElliotLossyNetwork
 from trainer import DistributedTrainer, MyClassifierCallback, MyQACallback, MyQATrainer, compute_classfication_metrics, compute_exact_match_metric
 from data import get_dataset
@@ -143,7 +142,7 @@ classification_datasets = ['winogrande', 'mnli', 'sst2', 'hellaswag', 'piqa', 'a
 generation_datasets = ['hotpotqa', 'squad']
 def main(args):
 
-    with open("src/config.yaml") as config:
+    with open("src/dataset_config.yaml") as config:
         try:
             dataset_config = yaml.safe_load(config)
         except yaml.YAMLError as exc:
@@ -207,7 +206,7 @@ def main(args):
         num_train_epochs=args.epochs,
         learning_rate= args.learning_rate,
         weight_decay=0.01,
-        eval_strategy="steps",
+        evaluation_strategy="steps",
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
         save_strategy="steps",

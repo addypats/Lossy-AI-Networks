@@ -147,7 +147,6 @@
 
 
 # Original Pegah's code
-
 from transformers import Trainer, TrainerCallback, Seq2SeqTrainer
 import torch
 import numpy as np
@@ -218,25 +217,54 @@ class MyQATrainer(DistributedTrainer):
         super().__init__(num_nodes, network, *args, **kwargs)
         self.eos_token_id = kwargs['tokenizer'].eos_token_id
 
+    # def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
+    #     if prediction_loss_only:
+    #         return super().prediction_step(model, inputs, prediction_loss_only, ignore_keys)
+
+    #     model.eval()
+    #     with torch.no_grad():
+    #         outputs = model(**inputs)
+    #         loss = getattr(outputs, "loss", None)
+
+    #         generated_tokens = model.generate(
+    #             input_ids=inputs["input_ids"],
+    #             attention_mask=inputs["attention_mask"],
+    #             do_sample=False,
+    #             max_new_tokens=10,
+    #             eos_token_id=self.eos_token_id,
+    #             pad_token_id=model.config.pad_token_id, 
+    #             early_stopping=True
+    #         )
+
+    #     labels = inputs.get("labels")
+    #     return (loss, generated_tokens, labels)
     def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
         if prediction_loss_only:
             return super().prediction_step(model, inputs, prediction_loss_only, ignore_keys)
 
         model.eval()
         with torch.no_grad():
-            outputs = model(**inputs)
-            loss = getattr(outputs, "loss", None)
+            loss = None
+            if "labels" in inputs:
+                outputs = model(
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs["attention_mask"],
+                    labels=inputs["labels"]
+                )
+                loss = outputs.loss
 
             generated_tokens = model.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
+                max_new_tokens=20,
                 do_sample=False,
-                max_new_tokens=10,
                 eos_token_id=self.eos_token_id,
-                pad_token_id=model.config.pad_token_id
+                pad_token_id=model.config.pad_token_id,
+                early_stopping=True
             )
 
-        labels = inputs.get("labels")
+        # Ensure all tensors are returned
+        labels = inputs.get("labels", None)
         return (loss, generated_tokens, labels)
 
 
@@ -247,7 +275,7 @@ def compute_exact_match_metric(tokenizer):
         decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
-
+        breakpoint()
         correct = sum(
             (pred.partition("Answer:")[2].strip().lower() == label.partition("Answer:")[2].strip().lower())
             for pred, label in zip(decoded_preds, decoded_labels)
@@ -292,6 +320,8 @@ class MyClassifierCallback(TrainerCallback):
 
     def __init__(self, args=None):
         super().__init__()
+        self.counter = 0
+        self.patience = 5
         self.args = args
         self.args['report_ttac'] = sorted(self.args['report_ttac'])
         self.args['report_ttac'] = sorted(self.args['report_ttac'], reverse=True)
@@ -307,16 +337,21 @@ class MyClassifierCallback(TrainerCallback):
         
         accuracy = kwargs["metrics"]["eval_accuracy"]
         if accuracy > self.args['target_acc']:
-            print(f"Target accuracy {self.args['target_acc']} reached. Stopping training.")
-            control.should_training_stop = True
-
-        if len(self.args['report_ttac']) > 0:
-            if accuracy > self.args['report_ttac'][0]:
-                with open(self.args['report_file'], "a") as f:
+            self.counter +=1
+            if self.counter >= self.patience:
+                print(f"Target accuracy {self.args['target_acc']} reached. Stopping training.")
+                with open(self.args['report_file'], "w") as f:
                     f.write(f"Accuracy: {accuracy:.3f}, Threshold: {self.args['report_ttac'][0]},  Step: {state.global_step}\n")
-                self.args['report_ttac'] = self.args['report_ttac'][1:]
+                control.should_training_stop = True
+
+        # if len(self.args['report_ttac']) > 0:
+        #     if accuracy > self.args['report_ttac'][0]:
+        #         with open(self.args['report_file'], "a") as f:
+        #             f.write(f"Accuracy: {accuracy:.3f}, Threshold: {self.args['report_ttac'][0]},  Step: {state.global_step}\n")
+        #         self.args['report_ttac'] = self.args['report_ttac'][1:]
             
         return super().on_evaluate(args, state, control, **kwargs)
+        
 
 
 # My code based on Pegah's for AWS
