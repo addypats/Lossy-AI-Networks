@@ -91,7 +91,9 @@ def get_qa_model_and_tokenizer(model_name, num_unfrozen_layers=None):
     model = AutoModelForCausalLM.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
-        tokenizer.add_special_tokens({'pad_token': '|<pad>|'})
+        # Original one
+        # tokenizer.add_special_tokens({'pad_token': '|<pad>|'})
+        tokenizer.add_special_tokens({'pad_token': '<|pad|>'})
         model.resize_token_embeddings(len(tokenizer))
         model.config.pad_token_id = tokenizer.pad_token_id
     else:
