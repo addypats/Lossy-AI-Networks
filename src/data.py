@@ -521,7 +521,7 @@ def get_quality(tokenizer, args):
 
 def get_hotpotqa(tokenizer, args):
     max_length = 1000
-    dataset = load_dataset("hotpot_qa", "distractor")
+    dataset = load_dataset("hotpot_qa", "distractor", trust_remote_code=True)
     def preprocess(data): 
         context = ""
         for i, title in enumerate(data["context"]["title"]):

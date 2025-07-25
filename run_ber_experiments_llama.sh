@@ -3,18 +3,22 @@
 # MODEL="Qwen/Qwen2-1.5B"
 # MODEL="microsoft/phi-2"
 MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
-# DATASET="mnli"
-DATASET="hotpotqa"
+# MODEL="google/gemma-1.1-2b-it"
+DATASET="mnli"
+# DATASET="hotpotqa"
+# DATASET="squad"
+# DATASET="piqa"
 
-# LOSS_RATES=("0.0" "0.001" "0.005" "0.01")
-LOSS_RATES=(0.0)
-# NUM_NODES=("2" "10")
-NUM_NODES=(2)
+LOSS_RATES=("0.0" "0.001" "0.002" "0.005" "0.01")
+# LOSS_RATES=(0.0)
+NUM_NODES=("2" "4" "8" "10")
+# NUM_NODES=(2)
 # SEEDS=("10" "20" "30" "40" "50")
 SEEDS=(10)
+
 # GPU settings
-export CUDA_VISIBLE_DEVICES=1
-export WANDB_PROJECT="lossy_network"
+export CUDA_VISIBLE_DEVICES=0
+export WANDB_PROJECT="lossy_network_latest"
 
 # Create output directory if it doesn't exist
 mkdir -p output

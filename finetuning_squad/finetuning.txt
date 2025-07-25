@@ -1,0 +1,38 @@
+Fri Jul 25 13:26:52 2025       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 530.30.02              Driver Version: 530.30.02    CUDA Version: 12.1     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                  Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf            Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA H100 PCIe                On | 00000000:81:00.0 Off |                    0 |
+| N/A   33C    P0               47W / 350W|      0MiB / 81559MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+==== Started Finetuning ====
+Job started at Fri Jul 25 13:26:52 EDT 2025
+==== Started Ber Finetuning ====
+Starting experiment: 2nodes_mnli_lr0.0_seed10
+{'loss': 1.9859, 'grad_norm': 97.10162353515625, 'learning_rate': 1.999790463773515e-05, 'epoch': 0.0}
+{'loss': 1.1054, 'grad_norm': 110.16008758544922, 'learning_rate': 1.9995576457440865e-05, 'epoch': 0.0}
+{'eval_loss': 0.9141622185707092, 'eval_accuracy': 0.6071319409067754, 'eval_f1': 0.5912947322345234, 'eval_runtime': 166.9433, 'eval_samples_per_second': 58.792, 'eval_steps_per_second': 1.839, 'epoch': 0.0}
+{'loss': 0.8855, 'grad_norm': 97.62242126464844, 'learning_rate': 1.9993248277146583e-05, 'epoch': 0.0}
+{'loss': 0.769, 'grad_norm': 103.31497192382812, 'learning_rate': 1.9990920096852302e-05, 'epoch': 0.0}
+{'eval_loss': 0.7023575901985168, 'eval_accuracy': 0.7165562913907285, 'eval_f1': 0.7109849212000441, 'eval_runtime': 167.527, 'eval_samples_per_second': 58.588, 'eval_steps_per_second': 1.833, 'epoch': 0.0}
+{'loss': 0.6371, 'grad_norm': 85.07008361816406, 'learning_rate': 1.998859191655802e-05, 'epoch': 0.0}
+{'loss': 0.5306, 'grad_norm': 98.81041717529297, 'learning_rate': 1.998626373626374e-05, 'epoch': 0.0}
+{'eval_loss': 0.609186589717865, 'eval_accuracy': 0.7695364238410596, 'eval_f1': 0.7630980793437389, 'eval_runtime': 167.5312, 'eval_samples_per_second': 58.586, 'eval_steps_per_second': 1.832, 'epoch': 0.0}
+{'loss': 0.5282, 'grad_norm': 71.02824401855469, 'learning_rate': 1.9983935555969454e-05, 'epoch': 0.01}
+{'loss': 0.6559, 'grad_norm': 146.8525848388672, 'learning_rate': 1.9981607375675173e-05, 'epoch': 0.01}
+{'eval_loss': 0.5737094283103943, 'eval_accuracy': 0.7821701477330616, 'eval_f1': 0.7843682593062493, 'eval_runtime': 167.6887, 'eval_samples_per_second': 58.531, 'eval_steps_per_second': 1.831, 'epoch': 0.01}
+{'loss': 0.5457, 'grad_norm': 54.23402786254883, 'learning_rate': 1.997927919538089e-05, 'epoch': 0.01}
+{'loss': 0.6926, 'grad_norm': 101.0694351196289, 'learning_rate': 1.997695101508661e-05, 'epoch': 0.01}
