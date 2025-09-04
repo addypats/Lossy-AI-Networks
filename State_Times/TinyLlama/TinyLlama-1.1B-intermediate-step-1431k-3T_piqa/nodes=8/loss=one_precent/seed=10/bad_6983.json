@@ -1,0 +1,19 @@
+{
+  "state": "bad",
+  "episode_index": 6983,
+  "state_ordinal": 3491,
+  "start_time_wall": 1756955840.7430623,
+  "end_time_wall": 1756955840.9114194,
+  "wall_time_sec": 0.1683576150007866,
+  "steps": 2,
+  "packets": 63638,
+  "dropped": 41484,
+  "running_total_steps": 716417,
+  "running_total_packets": 10172269995,
+  "running_total_dropped": 109146789,
+  "running_total_time_sec": 1902.8613191170007,
+  "p_gb": 0.005,
+  "p_bg": 0.3,
+  "good_loss_rate": 0.0,
+  "bad_loss_rate": 0.65
+}

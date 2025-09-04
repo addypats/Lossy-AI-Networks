@@ -1,12 +1,12 @@
 #!/bin/bash
-# MODEL="meta-llama/Llama-3.2-1B"
+MODEL="meta-llama/Llama-3.2-1B"
 # MODEL="Qwen/Qwen2-1.5B"
 # MODEL="microsoft/phi-2"
-MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
+# MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 # MODEL="google/gemma-1.1-2b-it"
-DATASET="mnli"
+# DATASET="mnli"
 # DATASET="hotpotqa"
-# DATASET="squad"
+DATASET="squad"
 # DATASET="piqa"
 
 LOSS_RATES=("0.0" "0.001" "0.002" "0.005" "0.01")

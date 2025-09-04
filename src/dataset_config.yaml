@@ -6,7 +6,7 @@ winogrande:
 sst2:
   num_labels: 2
   report_ttac: [0.7, 0.8, 0.9]
-  target_acc: 0.95
+  target_acc: 0.9
 
 arc:
   num_labels: 4
@@ -21,7 +21,7 @@ hellaswag:
 piqa:
   num_labels: 2
   report_ttac: [0.5, 0.7, 0.8]
-  target_acc: 0.85
+  target_acc: 0.68
 
 mnli:
   num_labels: 3
@@ -35,7 +35,7 @@ quality:
 
 hotpotqa:
   report_ttac: [0.1, 0.3, 0.5]
-  target_acc: 0.5
+  target_acc: 0.75
 
 squad:
   report_ttac: [0.4, 0.6, 0.8]

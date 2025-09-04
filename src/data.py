@@ -387,29 +387,76 @@ def get_cosmosqa(tokenizer, args):
 
     return train_dataset, eval_dataset
 
+# def get_arc(tokenizer, args):
+
+#     keys = {
+#         'A': 0, 'B': 1, 'C': 2, 'D': 3, '1': 0, '2': 1, '3': 2, '4': 3,
+#     }
+#     max_length = args.max_length if args.max_length > 0 else 256
+#     dataset = load_dataset("allenai/ai2_arc", "ARC-Easy")
+#     train_dataset = dataset["train"]
+#     eval_dataset = dataset["validation"]
+#     def preprocess(data):
+
+#         question = data['question']
+#         choices = list(zip(data['choices']['text'], data['choices']['label']))
+        
+#         choices = '\n'.join([f"{label}: {text}" for text, label in choices])
+#         question = f"{question}\n\n{choices}"
+
+#         return {
+#             'input_ids': tokenizer(question, truncation=True, padding="max_length", max_length=max_length)["input_ids"],
+#             'attention_mask': tokenizer(question, truncation=True, padding="max_length", max_length=max_length)["attention_mask"],
+#             'labels': keys.get(data["answerKey"], -1)
+#         }
+        
+#     train_dataset = train_dataset.map(preprocess, remove_columns=["question", "answerKey", "choices"])
+#     eval_dataset = eval_dataset.map(preprocess, remove_columns=["question", "answerKey", "choices"])
+
+#     # Filter out invalid labels
+#     train_dataset = train_dataset.filter(lambda x: x['labels'] != -1)
+#     eval_dataset = eval_dataset.filter(lambda x: x['labels'] != -1)
+
+#     return train_dataset, eval_dataset
+
 def get_arc(tokenizer, args):
 
     keys = {
         'A': 0, 'B': 1, 'C': 2, 'D': 3, '1': 0, '2': 1, '3': 2, '4': 3,
     }
+    choice_unification = {
+        'A': '1', 'B': '2', 'C': '3', 'D': '4',
+        '1': '1', '2': '2', '3': '3', '4': '4'
+    }
     max_length = args.max_length if args.max_length > 0 else 256
     dataset = load_dataset("allenai/ai2_arc", "ARC-Easy")
     train_dataset = dataset["train"]
     eval_dataset = dataset["validation"]
+    
     def preprocess(data):
-
         question = data['question']
-        choices = list(zip(data['choices']['text'], data['choices']['label']))
-        
-        choices = '\n'.join([f"{label}: {text}" for text, label in choices])
-        question = f"{question}\n\n{choices}"
+        # normalize each label individually
+        normalized_labels = [choice_unification.get(lbl, lbl) for lbl in data['choices']['label']]
+        choices = list(zip(data['choices']['text'], normalized_labels))
+
+        # format choices into the prompt
+        choices_str = '\n'.join([f"{label}: {text}" for text, label in choices])
+        prompt = f"{question}\n\n{choices_str}"
+
+        tokenized = tokenizer(
+            prompt,
+            truncation=True,
+            padding="max_length",
+            max_length=max_length
+        )
 
         return {
-            'input_ids': tokenizer(question, truncation=True, padding="max_length", max_length=max_length)["input_ids"],
-            'attention_mask': tokenizer(question, truncation=True, padding="max_length", max_length=max_length)["attention_mask"],
+            'input_ids': tokenized["input_ids"],
+            'attention_mask': tokenized["attention_mask"],
             'labels': keys.get(data["answerKey"], -1)
         }
-        
+
+
     train_dataset = train_dataset.map(preprocess, remove_columns=["question", "answerKey", "choices"])
     eval_dataset = eval_dataset.map(preprocess, remove_columns=["question", "answerKey", "choices"])
 
@@ -519,35 +566,97 @@ def get_quality(tokenizer, args):
     return train_dataset, eval_dataset
 
 
-def get_hotpotqa(tokenizer, args):
-    max_length = 1000
-    dataset = load_dataset("hotpot_qa", "distractor", trust_remote_code=True)
-    def preprocess(data): 
-        context = ""
-        for i, title in enumerate(data["context"]["title"]):
-            context += f"{title}:\n {''.join(data['context']['sentences'][i])}"
-        input_text = f"""
-        Answer the question based on the context. The context is a collection of Wikipedia articles. Answer with a single word or phrase.\n
-        ## Context:\n{context}\n
-        ## Question: {data['question']}\n
-        ## Answer: {data['answer']}\n
-        """
+# def get_hotpotqa(tokenizer, args):
+#     max_length = 1000
+#     dataset = load_dataset("hotpot_qa", "distractor", trust_remote_code=True)
+#     def preprocess(data): 
+#         context = ""
+#         for i, title in enumerate(data["context"]["title"]):
+#             context += f"{title}:\n {''.join(data['context']['sentences'][i])}"
+#         input_text = f"""
+#         Answer the question based on the context. The context is a collection of Wikipedia articles. Answer with a single word or phrase.\n
+#         ## Context:\n{context}\n
+#         ## Question: {data['question']}\n
+#         ## Answer: {data['answer']}\n
+#         """
 
-        d = {'input_ids': tokenizer(input_text, truncation=True, padding="max_length", max_length=max_length)["input_ids"],
-             'attention_mask': tokenizer(input_text, truncation=True, padding="max_length", max_length=max_length)["attention_mask"],
-             'labels': tokenizer(data['answer'], truncation=True, padding="max_length", max_length=max_length)["input_ids"]}
-        # Remove padding tokens from labels
-        d['labels'] = [label if label != tokenizer.pad_token_id else -100 for label in d['labels']]
-        return d
+#         d = {'input_ids': tokenizer(input_text, truncation=True, padding="max_length", max_length=max_length)["input_ids"],
+#              'attention_mask': tokenizer(input_text, truncation=True, padding="max_length", max_length=max_length)["attention_mask"],
+#              'labels': tokenizer(data['answer'], truncation=True, padding="max_length", max_length=max_length)["input_ids"]}
+#         # Remove padding tokens from labels
+#         d['labels'] = [label if label != tokenizer.pad_token_id else -100 for label in d['labels']]
+#         return d
+#     if args.max_samples > 0:
+#         train_dataset = dataset['train'].shuffle(seed=args.seed).select(range(min(args.max_samples, len(dataset["train"]))))
+#         eval_dataset = dataset['validation'].shuffle(seed=args.seed).select(range(min(32, len(dataset["validation"]))))
+#     else:
+#         train_dataset = dataset["train"]
+#         eval_dataset = dataset["validation"]
+#     train_dataset = train_dataset.map(preprocess)
+#     eval_dataset = eval_dataset.map(preprocess)
+#     return train_dataset, eval_dataset
+
+from datasets import load_dataset
+
+def get_hotpotqa(tokenizer, args):
+    max_length = args.max_length if hasattr(args, "max_length") else 256
+    dataset = load_dataset("hotpot_qa", "distractor", trust_remote_code=True)
+
+    def preprocess(example):
+        # Build context string
+        context = ""
+        for title, sentences in zip(example["context"]["title"], example["context"]["sentences"]):
+            context += f"{title}:\n{''.join(sentences)}\n"
+
+        # Prompt does NOT include the gold answer
+        prompt = (
+            "Answer the question based on the context. The context is a collection of Wikipedia articles. "
+            "Answer with a single word or phrase.\n\n"
+            "## Context:\n"
+            f"{context}\n"
+            f"## Question: {example['question']}\n"
+            "## Answer:"
+        )
+
+        # Tokenize prompt and gold answer separately
+        inputs = tokenizer(
+            prompt,
+            truncation=True,
+            padding="max_length",
+            max_length=max_length,
+        )
+        label_enc = tokenizer(
+            example["answer"],
+            truncation=True,
+            padding="max_length",
+            max_length=max_length,
+        )
+
+        labels = label_enc["input_ids"]
+        # Replace pad token id with -100 so loss ignores padding
+        labels = [l if l != tokenizer.pad_token_id else -100 for l in labels]
+
+        return {
+            "input_ids": inputs["input_ids"],
+            "attention_mask": inputs["attention_mask"],
+            "labels": labels,
+        }
+
     if args.max_samples > 0:
-        train_dataset = dataset['train'].shuffle(seed=args.seed).select(range(min(args.max_samples, len(dataset["train"]))))
-        eval_dataset = dataset['validation'].shuffle(seed=args.seed).select(range(min(32, len(dataset["validation"]))))
+        train_dataset = dataset["train"].shuffle(seed=args.seed).select(
+            range(min(args.max_samples, len(dataset["train"])))
+        )
+        eval_dataset = dataset["validation"].shuffle(seed=args.seed).select(
+            range(min(32, len(dataset["validation"])))
+        )
     else:
         train_dataset = dataset["train"]
         eval_dataset = dataset["validation"]
+
     train_dataset = train_dataset.map(preprocess)
     eval_dataset = eval_dataset.map(preprocess)
     return train_dataset, eval_dataset
+
 
 def get_squad(tokenizer, args):
     max_length = 1024

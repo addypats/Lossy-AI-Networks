@@ -1,14 +1,14 @@
 #!/bin/bash
 # MODEL="meta-llama/Llama-3.2-1B"
-# MODEL="openai-community/gpt2-large"
+MODEL="openai-community/gpt2-large"
 # MODEL_ALIAS="gpt2-large"
 # MODEL="Qwen/Qwen2-1.5B"
 # MODEL="google/gemma-1.1-2b-it"
 # MODEL_ALIAS="llama-3.2-1b"
-MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
-DATASET="mnli"
+# MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
+# DATASET="mnli"
 # DATASET="hotpotqa"
-# DATASET="squad"
+DATASET="squad"
 # DATASET="piqa"
 
 # LOSS_RATES=("0.0" "0.001" "0.005" "0.01")

@@ -165,7 +165,29 @@ class DistributedTrainer(Trainer):
 
 
     def training_step(self, model, inputs, num_items_in_batch=0):
-
+        
+        # === DEBUG: inspect inputs / labels for first two steps ===
+        if getattr(self, "_debug_steps_shown", 0) < 2:
+            print(f"[training_step] global debug count: {getattr(self, '_debug_steps_shown', 0)}")
+            print("Input keys:", list(inputs.keys()))
+            if "input_ids" in inputs and hasattr(self, "tokenizer") and self.tokenizer is not None:
+                try:
+                    B
+                    decoded = self.tokenizer.batch_decode(inputs["input_ids"], skip_special_tokens=True)
+                    print("Decoded input_ids (first 2):", decoded[:2])
+                except Exception as e:
+                    print("Failed to decode input_ids:", e)
+            labels = inputs.get("labels")
+            print("Raw labels tensor:", labels)
+            if labels is not None and hasattr(self, "tokenizer") and self.tokenizer is not None:
+                # Only attempt decode if labels look like token ids (avoid -100 masked, etc.)
+                try:
+                    decoded_labels = self.tokenizer.batch_decode(labels, skip_special_tokens=True)
+                    print("Decoded labels (first 2):", decoded_labels[:2])
+                except Exception as e:
+                    print("Failed to decode labels:", e)
+            self._debug_steps_shown = getattr(self, "_debug_steps_shown", 0) + 1
+    # === end debug ===
         num_items_in_batch = len(inputs[list(inputs.keys())[0]])
         minibatch_size = num_items_in_batch // self.num_nodes
         if minibatch_size == 0:
@@ -288,6 +310,12 @@ def compute_exact_match_metric(tokenizer):
 def compute_classfication_metrics(eval_pred):
     logits, labels = eval_pred
     preds = np.argmax(logits, axis=1)
+    # debug: show a few true vs pred
+    if len(labels) > 0:
+        try:
+            print("compute_classfication_metrics: true vs pred (first 5):", list(zip(labels[:5], preds[:5])))
+        except Exception:
+            pass
     return {
         "accuracy": accuracy_score(labels, preds),
         "f1": f1_score(labels, preds, average="weighted")
@@ -321,7 +349,7 @@ class MyClassifierCallback(TrainerCallback):
     def __init__(self, args=None):
         super().__init__()
         self.counter = 0
-        self.patience = 5
+        self.patience = 2
         self.args = args
         self.args['report_ttac'] = sorted(self.args['report_ttac'])
         self.args['report_ttac'] = sorted(self.args['report_ttac'], reverse=True)
@@ -352,7 +380,6 @@ class MyClassifierCallback(TrainerCallback):
             
         return super().on_evaluate(args, state, control, **kwargs)
         
-
 
 # My code based on Pegah's for AWS
 

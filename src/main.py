@@ -154,10 +154,17 @@ def main(args):
         network = LossyNetwork(args)
     elif loss_type == 'g-e':
         configs = pd.read_csv('g_e_params.csv')
+        original_id = args.ge_config
+        model_name = args.model_name
+        task = args.dataset
+        seed = args.seed
+        nodes = args.num_nodes
         ge_config = configs[configs['id'] == args.ge_config].iloc[0]
         network = GillbertElliotLossyNetwork(p_bg = ge_config[' pbg'],p_gb= ge_config[' pgb'],
                                              good_loss_rate=ge_config[' lrg'],
-                                             bad_loss_rate=ge_config[' lrb'], args=args)
+                                             bad_loss_rate=ge_config[' lrb'], args=args, loss_label=original_id,
+                                             model_name=model_name, task_name=task,
+                                             seed=seed, nodes=nodes)
     else:
         raise ValueError(f"Unsupported loss type: {loss_type}")
     network.set_seed(args.seed)
@@ -192,6 +199,8 @@ def main(args):
     if args.dataset in generation_datasets:
         callback_args['eos_token_id'] = tokenizer.eos_token_id
         compute_metrics = compute_exact_match_metric(tokenizer)
+        callback = MyQACallback(callback_args)
+        trainer_class = MyQATrainer
         callback = MyQACallback(callback_args)
         trainer_class = MyQATrainer
     else:
