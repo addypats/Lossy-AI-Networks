@@ -1,0 +1,39 @@
+#!/bin/bash
+#SBATCH --job-name=finetuning.job
+#SBATCH --output=/home/aapatwardhan/Lossy-AI-Networks/finetuning_squad/finetuning.txt
+#SBATCH --error=/home/aapatwardhan/Lossy-AI-Networks/finetuning_squad/finetuning_err.txt
+#SBATCH --gres=gpu:1
+#SBATCH --time=4-00:00
+
+nvidia-smi
+
+echo "==== Started Finetuning ===="
+
+
+# Start timer
+start_time=$(date +%s)
+echo "Job started at $(date)"
+
+source /home/aapatwardhan/miniconda3/etc/profile.d/conda.sh
+conda activate lossy
+
+export WANDB_API_KEY=ec5c5d00ca990b49c100a70286ca134efa0bf6ba
+
+echo "==== Started Ber Finetuning ===="
+
+bash /home/aapatwardhan/Lossy-AI-Networks/run_ber_experiments_llama.sh
+
+echo "==== Ber Finetuning Completed ===="
+
+
+echo "==== Started GE Finetuning ===="
+
+bash /home/aapatwardhan/Lossy-AI-Networks/run_ge_experiments_llama.sh
+
+echo "==== GE Finetuning Completed ===="
+
+# End timer and calculate duration
+end_time=$(date +%s)
+echo "Job ended at $(date)"
+duration=$((end_time - start_time))
+echo "Total job duration: $((duration / 3600)) hours, $(((duration % 3600) / 60)) minutes, $((duration % 60)) seconds"
