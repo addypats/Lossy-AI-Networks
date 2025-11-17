@@ -509,7 +509,7 @@ def get_hellaswag(tokenizer, args):
 
 def get_piqa(tokenizer, args):
     max_length = args.max_length if args.max_length > 0 else 256
-    dataset = load_dataset("piqa", trust_remote_code=True)
+    dataset = load_dataset("piqa")
     
     def preprocess(data):
         
