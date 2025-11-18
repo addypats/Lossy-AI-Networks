@@ -15,6 +15,7 @@ from torch.distributed import distributed_c10d as c10d  # useful to wrap interna
 import time
 # from lossy_patch_packets_1 import install_lossy_collectives
 from lossy_patch_sanity_check import install_lossy_collectives
+from lossy_grad_hooks import attach_lossy_grad_hooks
 import inspect
 
 # print("install_lossy_collectives sig:", inspect.signature(lossy_patch.install_lossy_collectives))
@@ -29,61 +30,85 @@ class LossyStepBump(TrainerCallback):
         os.environ["LOSSY_GLOBAL_STEP"] = str(state.global_step)
 
 
-# --- BEGIN INTROSPECTION WRAPPER ---
+class LossyGradHookCallback(TrainerCallback):
+    """
+    Installs lossy gradient hooks on the (possibly FSDP-wrapped) model
+    at the beginning of training.
+    """
+    def __init__(self, lossy: LossyNetwork, enable: bool = False, include_bias: bool = False):
+        super().__init__()
+        self.lossy = lossy
+        self.enable = enable
+        self.include_bias = include_bias
+        self._installed = False
 
-def _rk():
-    try:
-        return dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
-    except Exception:
-        return -1
+    def on_train_begin(self, args, state, control, **kwargs):
+        if not self.enable or self._installed:
+            return
+        model = kwargs.get("model", None)
+        if model is None:
+            return
+        attach_lossy_grad_hooks(model, self.lossy, include_bias=self.include_bias, verbose=True)
+        self._installed = True
 
-class _FileLogger:
-    def __init__(self, path):
-        self.path = path
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-    def log(self, msg):
-        print(msg, flush=True)
-        with open(self.path, "a") as f:
-            f.write(msg + "\n")
 
-def _wrap(obj, fn_name, logger):
-    if not hasattr(obj, fn_name):
-        return
-    orig = getattr(obj, fn_name)
-    if not callable(orig):
-        return
-    # prevent double-wrapping
-    if getattr(orig, "__wrapped_by_introspect__", False):
-        return
-    def wrapped(*args, **kwargs):
-        t0 = time.time()
-        try:
-            out = orig(*args, **kwargs)
-            return out
-        finally:
-            dt = (time.time() - t0) * 1000.0
-            logger.log(f"[INTROSPECT] rank={_rk()} {getattr(obj,'__name__',obj.__class__.__name__)}.{fn_name} dt={dt:.2f} ms")
-    wrapped.__wrapped_by_introspect__ = True
-    setattr(obj, fn_name, wrapped)
 
-def install_collective_hooks(logdir="logs"):
-    if not (dist.is_available() and dist.is_initialized()):
-        print("[INTROSPECT] dist not initialized; skipping install", flush=True)
-        return
-    rank = _rk()
-    logger = _FileLogger(os.path.join(logdir, f"rank{rank}_collectives.txt"))
-    try:
-        # public APIs Accelerate/HF use
-        for fn in ["all_reduce", "all_gather_into_tensor", "reduce_scatter_tensor", "barrier"]:
-            _wrap(dist, fn, logger)
-        # low-level entrypoints (used under the hood)
-        for fn in ["_allgather_base", "_reduce_scatter_base", "all_gather_into_tensor", "reduce_scatter_tensor"]:
-            _wrap(c10d, fn, logger)
-        logger.log(f"[INTROSPECT] rank={rank} hooks installed")
-    except Exception as e:
-        logger.log(f"[INTROSPECT] rank={rank} FAILED to install hooks: {e}\n{traceback.format_exc()}")
 
-# --- END INTROSPECTION WRAPPER ---
+# # --- BEGIN INTROSPECTION WRAPPER ---
+
+# def _rk():
+#     try:
+#         return dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+#     except Exception:
+#         return -1
+
+# class _FileLogger:
+#     def __init__(self, path):
+#         self.path = path
+#         os.makedirs(os.path.dirname(self.path), exist_ok=True)
+#     def log(self, msg):
+#         # print(msg, flush=True)
+#         with open(self.path, "a") as f:
+#             f.write(msg + "\n")
+
+# def _wrap(obj, fn_name, logger):
+#     if not hasattr(obj, fn_name):
+#         return
+#     orig = getattr(obj, fn_name)
+#     if not callable(orig):
+#         return
+#     # prevent double-wrapping
+#     if getattr(orig, "__wrapped_by_introspect__", False):
+#         return
+#     def wrapped(*args, **kwargs):
+#         t0 = time.time()
+#         try:
+#             out = orig(*args, **kwargs)
+#             return out
+#         finally:
+#             dt = (time.time() - t0) * 1000.0
+#             logger.log(f"[INTROSPECT] rank={_rk()} {getattr(obj,'__name__',obj.__class__.__name__)}.{fn_name} dt={dt:.2f} ms")
+#     wrapped.__wrapped_by_introspect__ = True
+#     setattr(obj, fn_name, wrapped)
+
+# def install_collective_hooks(logdir="logs"):
+#     if not (dist.is_available() and dist.is_initialized()):
+#         # print("[INTROSPECT] dist not initialized; skipping install", flush=True)
+#         return
+#     rank = _rk()
+#     logger = _FileLogger(os.path.join(logdir, f"rank{rank}_collectives.txt"))
+#     try:
+#         # public APIs Accelerate/HF use
+#         for fn in ["all_reduce", "all_gather_into_tensor", "reduce_scatter_tensor", "barrier"]:
+#             _wrap(dist, fn, logger)
+#         # low-level entrypoints (used under the hood)
+#         for fn in ["_allgather_base", "_reduce_scatter_base", "all_gather_into_tensor", "reduce_scatter_tensor"]:
+#             _wrap(c10d, fn, logger)
+#         logger.log(f"[INTROSPECT] rank={rank} hooks installed")
+#     except Exception as e:
+#         logger.log(f"[INTROSPECT] rank={rank} FAILED to install hooks: {e}\n{traceback.format_exc()}")
+
+# # --- END INTROSPECTION WRAPPER ---
 
 
 def main(args):
@@ -99,76 +124,76 @@ def main(args):
     if loss_type == 'ber':
         network = LossyNetwork(args)
         network.set_seed(args.seed)
-    elif loss_type == 'g-e':
-        # configs = pd.read_csv('g_e_params.csv')
-        # configs = pd.read_csv('ge_params_burst.csv')
-        configs = pd.read_csv('ge_params_questions.csv')
-        original_id = args.ge_config
-        model_name = args.model_name
-        task = args.dataset
-        seed = args.seed
-        nodes = args.num_nodes
-        ge_config = configs[configs['id'] == args.ge_config].iloc[0]
-        network = GillbertElliotLossyNetwork(p_bg = ge_config[' pbg'],p_gb= ge_config[' pgb'],
-                                             good_loss_rate=ge_config[' lrg'],
-                                             bad_loss_rate=ge_config[' lrb'], args=args, loss_label=original_id,
-                                             model_name=model_name, task_name=task,
-                                             seed=seed, nodes=nodes)
-        network.set_seed(args.seed)
-    elif loss_type == 'det':
-        import pandas as pd
-        from deterministic_loss import DeterministicBurstLossyNetwork
-        # Deterministic, GE-free, CSV-driven burst loss model
-        # We keep using args.ge_config as the run_id to avoid changing your launch scripts.
-        configs = pd.read_csv('runs_profile_det.csv')
-        run_id    = args.det_config        # e.g., "A3", "B2"
-        model_name = args.model_name
-        task       = args.dataset
-        seed       = args.seed
-        nodes      = args.num_nodes
+    # elif loss_type == 'g-e':
+    #     # configs = pd.read_csv('g_e_params.csv')
+    #     # configs = pd.read_csv('ge_params_burst.csv')
+    #     configs = pd.read_csv('ge_params_questions.csv')
+    #     original_id = args.ge_config
+    #     model_name = args.model_name
+    #     task = args.dataset
+    #     seed = args.seed
+    #     nodes = args.num_nodes
+    #     ge_config = configs[configs['id'] == args.ge_config].iloc[0]
+    #     network = GillbertElliotLossyNetwork(p_bg = ge_config[' pbg'],p_gb= ge_config[' pgb'],
+    #                                          good_loss_rate=ge_config[' lrg'],
+    #                                          bad_loss_rate=ge_config[' lrb'], args=args, loss_label=original_id,
+    #                                          model_name=model_name, task_name=task,
+    #                                          seed=seed, nodes=nodes)
+    #     network.set_seed(args.seed)
+    # elif loss_type == 'det':
+    #     import pandas as pd
+    #     from deterministic_loss import DeterministicBurstLossyNetwork
+    #     # Deterministic, GE-free, CSV-driven burst loss model
+    #     # We keep using args.ge_config as the run_id to avoid changing your launch scripts.
+    #     configs = pd.read_csv('runs_profile_det.csv')
+    #     run_id    = args.det_config        # e.g., "A3", "B2"
+    #     model_name = args.model_name
+    #     task       = args.dataset
+    #     seed       = args.seed
+    #     nodes      = args.num_nodes
 
-        # Load the CSV with all deterministic experiment configs
-        # df = pd.read_csv(csv_path)
+    #     # Load the CSV with all deterministic experiment configs
+    #     # df = pd.read_csv(csv_path)
 
-        # Helper casting functions
-        def to_int(x):   return int(x)
-        def to_float(x): return float(x)
-        def to_str(x):   return str(x)
+    #     # Helper casting functions
+    #     def to_int(x):   return int(x)
+    #     def to_float(x): return float(x)
+    #     def to_str(x):   return str(x)
 
-         # Find matching row by run_id (the column name in your CSV)
-        row = configs.loc[configs["runs_id"] == run_id]
-        if row.empty:
-            raise ValueError(f"id '{runs_id}' not found in {configs}. "
-                             f"Available: {configs['runs_id'].tolist()}")
-        r = row.iloc[0]   # <-- define r before using it
+    #      # Find matching row by run_id (the column name in your CSV)
+    #     row = configs.loc[configs["runs_id"] == run_id]
+    #     if row.empty:
+    #         raise ValueError(f"id '{runs_id}' not found in {configs}. "
+    #                          f"Available: {configs['runs_id'].tolist()}")
+    #     r = row.iloc[0]   # <-- define r before using it
 
-        # import os
+    #     # import os
 
-        run_id_str = str(r["runs_id"])        # e.g., "high_persistence_low_intensity_1"
+    #     run_id_str = str(r["runs_id"])        # e.g., "high_persistence_low_intensity_1"
 
-        # Create a subfolder inside det_logs/
-        log_dir = os.path.join("det_logs", run_id_str)
-        os.makedirs(log_dir, exist_ok=True)
+    #     # Create a subfolder inside det_logs/
+    #     log_dir = os.path.join("det_logs", run_id_str)
+    #     os.makedirs(log_dir, exist_ok=True)
 
-        # Instantiate directly from CSV; no pandas needed and no recomputation inside the class.
-        # det_config = configs[configs['id'] == args.det_config].iloc[0]
-        network = DeterministicBurstLossyNetwork.from_params(
-            run_id    = to_str(r["runs_id"]),
-            T_steps   = to_int(r["T_steps"]),
-            N         = to_int(r["N"]),
-            L_overall = to_float(r["L_overall"]),
-            lrg       = to_float(r["lrg"]),
-            lrb       = to_float(r["lrb"]),
-            piB       = to_float(r["piB"]),
-            B         = to_int(r["B"]),
-            Eb        = to_float(r["Eb"]),
-            rho       = to_float(r["rho"]),
-            seed      = to_int(r["seed"]),
-            skew_frac = to_float(r["skew_frac"]),
-            gap_mode  = to_str(r["gap_mode"]),
-            log_dir   = log_dir,
-            strict_validate = True
-        )
+    #     # Instantiate directly from CSV; no pandas needed and no recomputation inside the class.
+    #     # det_config = configs[configs['id'] == args.det_config].iloc[0]
+    #     network = DeterministicBurstLossyNetwork.from_params(
+    #         run_id    = to_str(r["runs_id"]),
+    #         T_steps   = to_int(r["T_steps"]),
+    #         N         = to_int(r["N"]),
+    #         L_overall = to_float(r["L_overall"]),
+    #         lrg       = to_float(r["lrg"]),
+    #         lrb       = to_float(r["lrb"]),
+    #         piB       = to_float(r["piB"]),
+    #         B         = to_int(r["B"]),
+    #         Eb        = to_float(r["Eb"]),
+    #         rho       = to_float(r["rho"]),
+    #         seed      = to_int(r["seed"]),
+    #         skew_frac = to_float(r["skew_frac"]),
+    #         gap_mode  = to_str(r["gap_mode"]),
+    #         log_dir   = log_dir,
+    #         strict_validate = True
+    #     )
 
     else:
         raise ValueError(f"Unsupported loss type: {loss_type}")
@@ -187,17 +212,29 @@ def main(args):
         rank = 0
     base_seed = getattr(args, "seed", 0)
     lossy.set_seed(base_seed + rank)
+    
+    # Decide how we apply loss
+    lossy_mode = getattr(args, "lossy_mode", "collectives")  # default for backward compat
+    use_collective_wrappers = (lossy_mode == "collectives")
+    use_grad_hooks = (lossy_mode == "grad_hooks")
+
 
     enable_ag = args.loss_enable_all or args.loss_enable_ag
     enable_rs = args.loss_enable_all or args.loss_enable_rs
     enable_ar = args.loss_enable_all or args.loss_enable_ar
 
-    # 1) install BEFORE building model/accelerator/trainer
-    install_lossy_collectives(lossy,
-                              enable_allgather=enable_ag,
-                              enable_rs=enable_rs,
-                              enable_allreduce=enable_ar,
-                              min_numel=0)
+    if use_collective_wrappers:
+        # 1) install BEFORE building model/accelerator/trainer
+        install_lossy_collectives(
+            lossy,
+            enable_allgather=enable_ag,
+            enable_rs=enable_rs,
+            enable_allreduce=enable_ar,
+            min_numel=0,
+        )
+        print("[lossy] Using COLLECTIVE wrappers for packet loss.")
+    else:
+        print(f"[lossy] Not installing lossy collectives (mode={lossy_mode}).")
 
 
     # for tasks other than classification you will need to modify the callback and the compute_metrics function, as well as get model and tokenizer
@@ -276,6 +313,18 @@ def main(args):
 
     # fsdp_introspect.enable(model, optimizer)
     # fsdp_introspect.enable(model, optimizer, log_dir="logs/fsdp_probe", flush_every=64)
+    
+    callbacks = [callback, LossyStepBump()]
+
+    # Only use grad-hook-based loss for Bernoulli for now
+    if use_grad_hooks and loss_type == "ber":
+        callbacks.append(
+            LossyGradHookCallback(lossy=lossy, enable=True, include_bias=False)
+        )
+        print("[lossy] Using GRAD-HOOK mode for Bernoulli loss.")
+    elif use_grad_hooks:
+        print("[lossy] Grad-hook mode requested but loss_type != 'ber'; skipping hooks for now.")
+
 
     trainer = trainer_class(
         model=model,
@@ -283,7 +332,7 @@ def main(args):
         args = training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        callbacks=[callback, LossyStepBump()],
+        callbacks=callbacks,
         compute_metrics=compute_metrics,
     )
 
@@ -336,6 +385,18 @@ if __name__ == "__main__":
     # optional: one switch to turn them all on
     parser.add_argument("--loss-enable-all", action="store_true",
                     help="Shortcut: enable AG, RS, and AR together.")
+    parser.add_argument(
+        "--lossy-mode",
+        type=str,
+        default="collectives",
+        choices=["collectives", "grad_hooks", "none"],
+        help=(
+            "How to apply lossy simulation:\n"
+            "  'collectives' = patch torch.distributed collectives (current behavior),\n"
+            "  'grad_hooks'  = apply packet loss via gradient hooks (Phase 1),\n"
+            "  'none'        = disable lossy simulation."
+        ),
+    )
 
     args = parser.parse_args()
     
