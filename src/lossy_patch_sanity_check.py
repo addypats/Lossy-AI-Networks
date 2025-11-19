@@ -75,33 +75,83 @@ def _write_layer_row(entry: dict) -> None:
 
     with open(_PACKET_LOG_PATH, mode="a", newline="") as f:
         writer = csv.writer(f)
+        # if not file_exists:
+        #     writer.writerow(
+        #         [
+        #             "Layer",
+        #             "LayerShape",
+        #             "ag_total_packets",
+        #             "ag_dropped_packets",
+        #             "ag_received_packets",
+        #             "rs_total_packets",
+        #             "rs_dropped_packets",
+        #             "rs_received_packets",
+        #         ]
+        #     )
+        
+        
+        # Additional logging - Tensor (gradient) size
+        
         if not file_exists:
             writer.writerow(
                 [
                     "Layer",
                     "LayerShape",
+                    "global_elems",
+                    "elem_size_bytes",
+                    "global_bytes",
+                    "ag_tensor_elems",
+                    "ag_tensor_bytes",
                     "ag_total_packets",
                     "ag_dropped_packets",
                     "ag_received_packets",
+                    "rs_tensor_elems",
+                    "rs_tensor_bytes",
                     "rs_total_packets",
                     "rs_dropped_packets",
                     "rs_received_packets",
                 ]
             )
 
+
+        # layer_shape = _layer_shape_str(entry["global_elems"], entry["dtype"])
+        # writer.writerow(
+        #     [
+        #         entry["layer_id"],
+        #         layer_shape,
+        #         entry.get("ag_total_packets", 0),
+        #         entry.get("ag_dropped_packets", 0),
+        #         entry.get("ag_received_packets", 0),
+        #         entry.get("rs_total_packets", 0),
+        #         entry.get("rs_dropped_packets", 0),
+        #         entry.get("rs_received_packets", 0),
+        #     ]
+        # )
+        
+        
+        # Additional logging - Tensor (gradient) size
+        
         layer_shape = _layer_shape_str(entry["global_elems"], entry["dtype"])
         writer.writerow(
             [
                 entry["layer_id"],
                 layer_shape,
+                entry["global_elems"],
+                entry["elem_size_bytes"],
+                entry["global_bytes"],
+                entry.get("ag_tensor_elems", 0),
+                entry.get("ag_tensor_bytes", 0),
                 entry.get("ag_total_packets", 0),
                 entry.get("ag_dropped_packets", 0),
                 entry.get("ag_received_packets", 0),
+                entry.get("rs_tensor_elems", 0),
+                entry.get("rs_tensor_bytes", 0),
                 entry.get("rs_total_packets", 0),
                 entry.get("rs_dropped_packets", 0),
                 entry.get("rs_received_packets", 0),
             ]
         )
+
 
 
 def _record_packets_instance(fn_name: str, t: torch.Tensor, stats: dict) -> None:
@@ -150,17 +200,49 @@ def _record_packets_instance(fn_name: str, t: torch.Tensor, stats: dict) -> None
     # Layer instance key is (shape, occurrence index)
     instance_key = (shape_key, occ)
 
+    # if instance_key not in _LAYER_INSTANCE_INFO:
+    #     _LAYER_INSTANCE_INFO[instance_key] = {
+    #         "layer_id": _NEXT_LAYER_ID,
+    #         "global_elems": global_elems,
+    #         "dtype": t.dtype,
+    #         "ag_total_packets": None,
+    #         "ag_dropped_packets": None,
+    #         "ag_received_packets": None,
+    #         "rs_total_packets": None,
+    #         "rs_dropped_packets": None,
+    #         "rs_received_packets": None,
+    #         "written": False,
+    #     }
+    #     _NEXT_LAYER_ID += 1
+    
+    
+    # Additional logging - Tensor (gradient) size
+    
     if instance_key not in _LAYER_INSTANCE_INFO:
+        elem_size_bytes = t.element_size()
         _LAYER_INSTANCE_INFO[instance_key] = {
             "layer_id": _NEXT_LAYER_ID,
-            "global_elems": global_elems,
+            "global_elems": int(global_elems),
             "dtype": t.dtype,
+            "elem_size_bytes": int(elem_size_bytes),
+            "global_bytes": int(global_elems * elem_size_bytes),
+
+            # AG-specific tensor size on this rank
+            "ag_tensor_elems": None,
+            "ag_tensor_bytes": None,
+
+            # RS-specific tensor size on this rank
+            "rs_tensor_elems": None,
+            "rs_tensor_bytes": None,
+
+            # packet stats (existing)
             "ag_total_packets": None,
             "ag_dropped_packets": None,
             "ag_received_packets": None,
             "rs_total_packets": None,
             "rs_dropped_packets": None,
             "rs_received_packets": None,
+
             "written": False,
         }
         _NEXT_LAYER_ID += 1
@@ -171,10 +253,16 @@ def _record_packets_instance(fn_name: str, t: torch.Tensor, stats: dict) -> None
         entry["ag_total_packets"] = int(stats["num_packets"])
         entry["ag_dropped_packets"] = int(stats["dropped_packets"])
         entry["ag_received_packets"] = int(stats["received_packets"])
+        # Additional logging - Tensor (gradient) size
+        entry["ag_tensor_elems"]      = int(t.numel())
+        entry["ag_tensor_bytes"]      = int(t.numel() * t.element_size())
     elif fn_name == "reduce_scatter_tensor":
         entry["rs_total_packets"] = int(stats["num_packets"])
         entry["rs_dropped_packets"] = int(stats["dropped_packets"])
         entry["rs_received_packets"] = int(stats["received_packets"])
+        # Additional logging - Tensor (gradient) size
+        entry["rs_tensor_elems"]      = int(t.numel())
+        entry["rs_tensor_bytes"]      = int(t.numel() * t.element_size())
 
     # Don't double-write
     if entry.get("written", False):

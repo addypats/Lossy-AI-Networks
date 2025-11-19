@@ -212,29 +212,17 @@ def main(args):
         rank = 0
     base_seed = getattr(args, "seed", 0)
     lossy.set_seed(base_seed + rank)
-    
-    # Decide how we apply loss
-    lossy_mode = getattr(args, "lossy_mode", "collectives")  # default for backward compat
-    use_collective_wrappers = (lossy_mode == "collectives")
-    use_grad_hooks = (lossy_mode == "grad_hooks")
-
 
     enable_ag = args.loss_enable_all or args.loss_enable_ag
     enable_rs = args.loss_enable_all or args.loss_enable_rs
     enable_ar = args.loss_enable_all or args.loss_enable_ar
 
-    if use_collective_wrappers:
-        # 1) install BEFORE building model/accelerator/trainer
-        install_lossy_collectives(
-            lossy,
-            enable_allgather=enable_ag,
-            enable_rs=enable_rs,
-            enable_allreduce=enable_ar,
-            min_numel=0,
-        )
-        print("[lossy] Using COLLECTIVE wrappers for packet loss.")
-    else:
-        print(f"[lossy] Not installing lossy collectives (mode={lossy_mode}).")
+    # 1) install BEFORE building model/accelerator/trainer
+    install_lossy_collectives(lossy,
+                              enable_allgather=enable_ag,
+                              enable_rs=enable_rs,
+                              enable_allreduce=enable_ar,
+                              min_numel=0)
 
 
     # for tasks other than classification you will need to modify the callback and the compute_metrics function, as well as get model and tokenizer
@@ -313,18 +301,6 @@ def main(args):
 
     # fsdp_introspect.enable(model, optimizer)
     # fsdp_introspect.enable(model, optimizer, log_dir="logs/fsdp_probe", flush_every=64)
-    
-    callbacks = [callback, LossyStepBump()]
-
-    # Only use grad-hook-based loss for Bernoulli for now
-    if use_grad_hooks and loss_type == "ber":
-        callbacks.append(
-            LossyGradHookCallback(lossy=lossy, enable=True, include_bias=False)
-        )
-        print("[lossy] Using GRAD-HOOK mode for Bernoulli loss.")
-    elif use_grad_hooks:
-        print("[lossy] Grad-hook mode requested but loss_type != 'ber'; skipping hooks for now.")
-
 
     trainer = trainer_class(
         model=model,
@@ -332,7 +308,7 @@ def main(args):
         args = training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        callbacks=callbacks,
+        callbacks=[callback, LossyStepBump()],
         compute_metrics=compute_metrics,
     )
 
@@ -385,18 +361,6 @@ if __name__ == "__main__":
     # optional: one switch to turn them all on
     parser.add_argument("--loss-enable-all", action="store_true",
                     help="Shortcut: enable AG, RS, and AR together.")
-    parser.add_argument(
-        "--lossy-mode",
-        type=str,
-        default="collectives",
-        choices=["collectives", "grad_hooks", "none"],
-        help=(
-            "How to apply lossy simulation:\n"
-            "  'collectives' = patch torch.distributed collectives (current behavior),\n"
-            "  'grad_hooks'  = apply packet loss via gradient hooks (Phase 1),\n"
-            "  'none'        = disable lossy simulation."
-        ),
-    )
 
     args = parser.parse_args()
     

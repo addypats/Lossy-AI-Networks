@@ -45,9 +45,6 @@ export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs
 # Using Ring All-Reduce
 export NCCL_ALGO=Ring
 
-# Use this for backup methods: --lossy-mode collectives
-# And this for no loss: --lossy-mode none
-
 # Create output directory if it doesn't exist
 mkdir -p output_piqa
 
@@ -78,7 +75,6 @@ for loss_rate in "${LOSS_RATES[@]}"; do
         --loss_rate "$loss_rate" \
 	--loss-enable-all \
         --seed "${seed}" \
-        --lossy-mode grad_hooks \
         --output_dir "${output_dir}" \
         --fp16
 
