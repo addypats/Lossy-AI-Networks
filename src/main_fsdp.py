@@ -15,7 +15,6 @@ from torch.distributed import distributed_c10d as c10d  # useful to wrap interna
 import time
 # from lossy_patch_packets_1 import install_lossy_collectives
 from lossy_patch_sanity_check import install_lossy_collectives
-from lossy_grad_hooks import attach_lossy_grad_hooks
 import inspect
 
 # print("install_lossy_collectives sig:", inspect.signature(lossy_patch.install_lossy_collectives))
@@ -124,22 +123,23 @@ def main(args):
     if loss_type == 'ber':
         network = LossyNetwork(args)
         network.set_seed(args.seed)
-    # elif loss_type == 'g-e':
-    #     # configs = pd.read_csv('g_e_params.csv')
-    #     # configs = pd.read_csv('ge_params_burst.csv')
-    #     configs = pd.read_csv('ge_params_questions.csv')
-    #     original_id = args.ge_config
-    #     model_name = args.model_name
-    #     task = args.dataset
-    #     seed = args.seed
-    #     nodes = args.num_nodes
-    #     ge_config = configs[configs['id'] == args.ge_config].iloc[0]
-    #     network = GillbertElliotLossyNetwork(p_bg = ge_config[' pbg'],p_gb= ge_config[' pgb'],
-    #                                          good_loss_rate=ge_config[' lrg'],
-    #                                          bad_loss_rate=ge_config[' lrb'], args=args, loss_label=original_id,
-    #                                          model_name=model_name, task_name=task,
-    #                                          seed=seed, nodes=nodes)
-    #     network.set_seed(args.seed)
+    elif loss_type == 'g-e':
+        configs = pd.read_csv('g_e_params.csv')
+        # configs = pd.read_csv('ge_params_burst.csv')
+        # configs = pd.read_csv('ge_params_questions.csv')
+        original_id = args.ge_config
+        model_name = args.model_name
+        task = args.dataset
+        seed = args.seed
+        nodes = args.num_nodes
+        ge_config = configs[configs['id'] == args.ge_config].iloc[0]
+        network = GillbertElliotLossyNetwork(p_bg = ge_config[' pbg'],p_gb= ge_config[' pgb'],
+                                             good_loss_rate=ge_config[' lrg'],
+                                             bad_loss_rate=ge_config[' lrb'], args=args, loss_label=original_id,
+                                             model_name=model_name, task_name=task,
+                                             seed=seed, nodes=nodes)
+        network.set_seed(args.seed)
+    
     # elif loss_type == 'det':
     #     import pandas as pd
     #     from deterministic_loss import DeterministicBurstLossyNetwork
@@ -199,8 +199,11 @@ def main(args):
         raise ValueError(f"Unsupported loss type: {loss_type}")
     # network.set_seed(args.seed)
 
-    lossy=LossyNetwork(args)
-    os.environ["LOSS_RATE"] = str(args.loss_rate)          # e.g., "0.01" = 1%
+    # lossy=LossyNetwork(args)
+
+    lossy=network
+    os.environ["LOSS_TYPE"] = loss_type
+    os.environ["LOSS_RATE"] = str(getattr(lossy, "loss_rate", args.loss_rate))      # e.g., "0.01" = 1%
     os.environ["LOSSY_GLOBAL_STEP"] = "0"                   # updated by callback each step
     os.environ["LOSSY_CALL_COUNTER"] = "0"                  # per-process, used for unique masks
 

@@ -284,62 +284,31 @@ def _apply_packet_loss_(
     tag: str = "",
 ) -> dict:
     """
-    Model C: Fractional packet loss per collective.
+    Generic packet-loss application using the LossyNetwork-style interface.
 
-    For THIS all-gather / reduce-scatter call:
-      - Compute num_packets for the tensor.
-      - Drop approximately (loss.loss_rate * num_packets) packets,
-        chosen uniformly at random without replacement.
-      - Return stats:
-          {
-              "num_packets": int,
-              "dropped_packets": int,
-              "received_packets": int,
-          }
+    - loss.send(tensor)   -> packet mask (True = kept, False = dropped)
+    - loss.receive(..)    -> applies that mask (zeroing dropped packets)
+
+    Works for:
+      - Bernoulli LossyNetwork (uses loss_rate)
+      - GillbertElliotLossyNetwork (uses GE state machine)
+      - Any subclass that implements send/receive.
     """
     if not _is_payload_tensor(tensor):
         return {"num_packets": 0, "dropped_packets": 0, "received_packets": 0}
 
     flat = tensor.view(-1)
-    elems_per_packet = max(1, MAX_PAYLOAD_BYTES // flat.element_size())
-    num_packets = math.ceil(flat.numel() / elems_per_packet)
 
-    if num_packets == 0:
+    # Use the loss model's packet generator
+    pkt_mask = loss.send(flat)
+    if pkt_mask is None:
+        # fall back: no loss applied
         return {"num_packets": 0, "dropped_packets": 0, "received_packets": 0}
 
-    device = flat.device if flat.is_cuda else torch.device("cpu")
+    # Apply loss (zero out dropped packets) in-place
+    loss.receive(flat, pkt_mask)
 
-    # Clamp loss_rate to [0, 1]
-    loss_fraction = float(loss.loss_rate)
-    loss_fraction = max(0.0, min(1.0, loss_fraction))
-
-    # Determine how many packets to drop (fixed fraction of total)
-    drop_count = int(round(loss_fraction * num_packets))
-    drop_count = max(0, min(drop_count, num_packets))
-
-    if drop_count == 0:
-        # No packets dropped for this collective
-        dropped_packets = 0
-        received_packets = num_packets
-        return {
-            "num_packets": num_packets,
-            "dropped_packets": dropped_packets,
-            "received_packets": received_packets,
-        }
-
-    # Sample exactly drop_count packets to drop (without replacement)
-    with torch.random.fork_rng(devices=[device] if flat.is_cuda else []):
-        if hasattr(loss, "seed"):
-            torch.manual_seed(loss.seed)
-        drop_indices = torch.randperm(num_packets, device=device)[:drop_count]
-
-    pkt_mask = torch.ones(num_packets, dtype=torch.bool, device=device)
-    pkt_mask[drop_indices] = False  # False => drop
-
-    # Expand packet mask to element mask
-    elem_mask = pkt_mask.repeat_interleave(elems_per_packet)[: flat.numel()]
-    flat.mul_(elem_mask.to(dtype=flat.dtype))
-
+    num_packets = int(len(pkt_mask))
     dropped_packets = int((~pkt_mask).sum().item())
     received_packets = num_packets - dropped_packets
 
