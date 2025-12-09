@@ -414,7 +414,7 @@ def install_lossy_collectives(
         #             print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
         
         # for rank aware strategy with input gpu getting loss for dist training on multiple instances
-        
+
         def wrapped(*args, **kwargs):
             t0 = time.time()
             try:
@@ -424,82 +424,91 @@ def install_lossy_collectives(
                         rank = dist.get_rank()
                         world_size = dist.get_world_size()
                     else:
-                        # Fallback: infer from env in case dist not yet initialized
                         rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
                         world_size = int(os.environ.get("WORLD_SIZE", "1"))
                 except Exception:
                     rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
                     world_size = int(os.environ.get("WORLD_SIZE", "1"))
 
-                # Avoid div-by-zero, but if num_nodes is wrong you'll see it quickly.
                 gpus_per_node = max(1, world_size // max(1, num_nodes))
                 node_id = rank // gpus_per_node
-                input_rank = node_id * gpus_per_node   # first rank on this node
-                # ----------------------------------------------------------------
+                input_rank = node_id * gpus_per_node
+                # ------------------------------------------------------------
 
-                if fn_name == "all_gather_into_tensor" and enable_allgather:
-                    # all_gather_into_tensor(output, input, group=...)
-                    if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-                        t = args[1]
-                        if (
-                            _is_payload_tensor(t)
-                            and t.numel() >= min_numel
-                            and rank == input_rank   # 2A: only input rank per node corrupts
-                        ):
-                            stats = _apply_packet_loss_(
-                                t,
-                                loss,
-                                tag="all_gather_into_tensor.input",
-                            )
-                            _record_packets_instance(fn_name, t, stats)
+                # ---- SAFE LOSS INJECTION: never kill the rank on error ----
+                try:
+                    if fn_name == "all_gather_into_tensor" and enable_allgather:
+                        # all_gather_into_tensor(output, input, group=...)
+                        if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                            t = args[1]
+                            if (
+                                _is_payload_tensor(t)
+                                and t.numel() >= min_numel
+                                and rank == input_rank   # 2A: boundary rank per node
+                            ):
+                                stats = _apply_packet_loss_(
+                                    t,
+                                    loss,
+                                    tag="all_gather_into_tensor.input",
+                                )
+                                _record_packets_instance(fn_name, t, stats)
 
-                elif fn_name == "reduce_scatter_tensor" and enable_rs:
-                    # reduce_scatter_tensor(output, input, group=...)
-                    if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-                        t = args[1]
-                        if (
-                            _is_payload_tensor(t)
-                            and t.numel() >= min_numel
-                            and rank == input_rank   # 2A: only input rank per node corrupts
-                        ):
-                            stats = _apply_packet_loss_(
-                                t,
-                                loss,
-                                tag="reduce_scatter_tensor.input",
-                            )
-                            _record_packets_instance(fn_name, t, stats)
+                    elif fn_name == "reduce_scatter_tensor" and enable_rs:
+                        # reduce_scatter_tensor(output, input, group=...)
+                        if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                            t = args[1]
+                            if (
+                                _is_payload_tensor(t)
+                                and t.numel() >= min_numel
+                                and rank == input_rank   # 2A
+                            ):
+                                stats = _apply_packet_loss_(
+                                    t,
+                                    loss,
+                                    tag="reduce_scatter_tensor.input",
+                                )
+                                _record_packets_instance(fn_name, t, stats)
 
-                elif fn_name == "all_reduce" and enable_allreduce:
-                    # all_reduce(tensor, group=...)
-                    if len(args) >= 1 and isinstance(args[0], torch.Tensor):
-                        t = args[0]
-                        if (
-                            _is_payload_tensor(t)
-                            and t.numel() >= min_numel
-                            and rank == input_rank   # 2A: only input rank per node corrupts
-                        ):
-                            _ = _apply_packet_loss_(
-                                t,
-                                loss,
-                                tag="all_reduce.tensor",
-                            )
+                    elif fn_name == "all_reduce" and enable_allreduce:
+                        # all_reduce(tensor, group=...)
+                        if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+                            t = args[0]
+                            if (
+                                _is_payload_tensor(t)
+                                and t.numel() >= min_numel
+                                and rank == input_rank   # 2A
+                            ):
+                                _ = _apply_packet_loss_(
+                                    t,
+                                    loss,
+                                    tag="all_reduce.tensor",
+                                )
 
+                except Exception as e:
+                    # IMPORTANT: log and fall back to *no-loss* for this call
+                    # instead of crashing this rank
+                    import traceback
+                    print(
+                        f"[LOSSY][ERROR] rank={rank} fn={fn_name}: "
+                        f"{type(e).__name__}: {e}",
+                        flush=True,
+                    )
+                    traceback.print_exc()
+
+                # Always call the real collective on all ranks
                 return original(*args, **kwargs)
+
             finally:
                 dt = (time.time() - t0) * 1000.0
                 try:
-                    r = int(
-                        os.environ.get(
-                            "RANK", os.environ.get("LOCAL_RANK", "0")
-                        )
-                    )
+                    r = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
                 except Exception:
                     r = 0
-                # if r == 0:
-                    # print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
-                    
+                if r == 0:
+                    print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
 
         return wrapped
+        
 
     for name in ("all_gather_into_tensor", "reduce_scatter_tensor", "all_reduce"):
         if hasattr(dist, name):
