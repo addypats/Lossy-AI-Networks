@@ -201,31 +201,31 @@ def main(args):
 
     # lossy=LossyNetwork(args)
 
-    lossy=network
-    os.environ["LOSS_TYPE"] = loss_type
-    os.environ["LOSS_RATE"] = str(getattr(lossy, "loss_rate", args.loss_rate))      # e.g., "0.01" = 1%
-    os.environ["LOSSY_GLOBAL_STEP"] = "0"                   # updated by callback each step
-    os.environ["LOSSY_CALL_COUNTER"] = "0"                  # per-process, used for unique masks
+    # lossy=network
+    # os.environ["LOSS_TYPE"] = loss_type
+    # os.environ["LOSS_RATE"] = str(getattr(lossy, "loss_rate", args.loss_rate))      # e.g., "0.01" = 1%
+    # os.environ["LOSSY_GLOBAL_STEP"] = "0"                   # updated by callback each step
+    # os.environ["LOSSY_CALL_COUNTER"] = "0"                  # per-process, used for unique masks
 
     # optional: make randomness per-rank reproducible
-    try:
-        dist_inited = dist.is_available() and dist.is_initialized()
-        rank = dist.get_rank() if dist_inited else int(os.environ.get("RANK", "0"))
-    except Exception:
-        rank = 0
-    base_seed = getattr(args, "seed", 0)
-    lossy.set_seed(base_seed + rank)
+    # try:
+      #   dist_inited = dist.is_available() and dist.is_initialized()
+      #   rank = dist.get_rank() if dist_inited else int(os.environ.get("RANK", "0"))
+    # except Exception:
+      #   rank = 0
+    # base_seed = getattr(args, "seed", 0)
+    # lossy.set_seed(base_seed + rank)
 
-    enable_ag = args.loss_enable_all or args.loss_enable_ag
-    enable_rs = args.loss_enable_all or args.loss_enable_rs
-    enable_ar = args.loss_enable_all or args.loss_enable_ar
+    # enable_ag = args.loss_enable_all or args.loss_enable_ag
+    # enable_rs = args.loss_enable_all or args.loss_enable_rs
+    # enable_ar = args.loss_enable_all or args.loss_enable_ar
 
     # 1) install BEFORE building model/accelerator/trainer
-    install_lossy_collectives(lossy,
-                              enable_allgather=enable_ag,
-                              enable_rs=enable_rs,
-                              enable_allreduce=enable_ar,
-                              min_numel=0)
+    # install_lossy_collectives(lossy,
+      #                         enable_allgather=enable_ag,
+        #                       enable_rs=enable_rs,
+          #                     enable_allreduce=enable_ar,
+            #                   min_numel=0)
 
 
     # for tasks other than classification you will need to modify the callback and the compute_metrics function, as well as get model and tokenizer
