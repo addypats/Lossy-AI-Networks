@@ -495,9 +495,9 @@ def install_lossy_collectives(
                     )
                 except Exception:
                     r = 0
-                if r == 0:
-                    print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
-
+                # if r == 0:
+                    # print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
+                    
 
         return wrapped
 
