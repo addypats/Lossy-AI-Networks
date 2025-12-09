@@ -319,34 +319,133 @@ def _apply_packet_loss_(
     }
 
 
+# def install_lossy_collectives(
+#     loss: LossyNetwork,
+#     enable_allgather: bool = True,
+#     enable_rs: bool = True,
+#     enable_allreduce: bool = True,
+#     min_numel: int = 0,
+# ):
+
+# """
+#     Monkey-patch torch.distributed collectives to inject loss AND
+#     log per-layer-instance packet counts.
+
+#     Call on every rank AFTER init_process_group,
+#     BEFORE constructing FSDP/HF objects.
+
+#     min_numel: if >0, skip tensors smaller than this (avoid control traffic).
+#     """
+
+# for rank aware strategy with input gpu getting loss for dist training on multiple instances
+
 def install_lossy_collectives(
     loss: LossyNetwork,
     enable_allgather: bool = True,
     enable_rs: bool = True,
     enable_allreduce: bool = True,
     min_numel: int = 0,
+    num_nodes: int = 1,
 ):
     """
     Monkey-patch torch.distributed collectives to inject loss AND
     log per-layer-instance packet counts.
 
-    Call on every rank AFTER init_process_group,
-    BEFORE constructing FSDP/HF objects.
-
-    min_numel: if >0, skip tensors smaller than this (avoid control traffic).
-    """
+    2A-style rank-aware behavior:
+    - Divide world_size into `num_nodes` blocks.
+    - For each node, designate the *first* rank in that block as the
+      logical "input rank".
+    - Only that input rank applies loss before the collective.
+    """    
 
     def _wrap(fn_name):
         original = getattr(dist, fn_name)
 
+        # def wrapped(*args, **kwargs):
+        #     t0 = time.time()
+        #     try:
+        #         if fn_name == "all_gather_into_tensor" and enable_allgather:
+        #             # all_gather_into_tensor(output, input, group=...)
+        #             if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+        #                 t = args[1]
+        #                 if _is_payload_tensor(t) and t.numel() >= min_numel:
+        #                     stats = _apply_packet_loss_(
+        #                         t,
+        #                         loss,
+        #                         tag="all_gather_into_tensor.input",
+        #                     )
+        #                     _record_packets_instance(fn_name, t, stats)
+
+        #         elif fn_name == "reduce_scatter_tensor" and enable_rs:
+        #             # reduce_scatter_tensor(output, input, group=...)
+        #             if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+        #                 t = args[1]
+        #                 if _is_payload_tensor(t) and t.numel() >= min_numel:
+        #                     stats = _apply_packet_loss_(
+        #                         t,
+        #                         loss,
+        #                         tag="reduce_scatter_tensor.input",
+        #                     )
+        #                     _record_packets_instance(fn_name, t, stats)
+
+        #         elif fn_name == "all_reduce" and enable_allreduce:
+        #             # all_reduce(tensor, group=...)
+        #             if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+        #                 t = args[0]
+        #                 if _is_payload_tensor(t) and t.numel() >= min_numel:
+        #                     _ = _apply_packet_loss_(
+        #                         t,
+        #                         loss,
+        #                         tag="all_reduce.tensor",
+        #                     )
+
+        #         return original(*args, **kwargs)
+        #     finally:
+        #         dt = (time.time() - t0) * 1000.0
+        #         try:
+        #             r = int(
+        #                 os.environ.get(
+        #                     "RANK", os.environ.get("LOCAL_RANK", "0")
+        #                 )
+        #             )
+        #         except Exception:
+        #             r = 0
+        #         if r == 0:
+        #             print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
+        
+        # for rank aware strategy with input gpu getting loss for dist training on multiple instances
+        
         def wrapped(*args, **kwargs):
             t0 = time.time()
             try:
+                # ---- 2A: determine node_id and input rank for this rank ----
+                try:
+                    if dist.is_available() and dist.is_initialized():
+                        rank = dist.get_rank()
+                        world_size = dist.get_world_size()
+                    else:
+                        # Fallback: infer from env in case dist not yet initialized
+                        rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+                        world_size = int(os.environ.get("WORLD_SIZE", "1"))
+                except Exception:
+                    rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+                    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+
+                # Avoid div-by-zero, but if num_nodes is wrong you'll see it quickly.
+                gpus_per_node = max(1, world_size // max(1, num_nodes))
+                node_id = rank // gpus_per_node
+                input_rank = node_id * gpus_per_node   # first rank on this node
+                # ----------------------------------------------------------------
+
                 if fn_name == "all_gather_into_tensor" and enable_allgather:
                     # all_gather_into_tensor(output, input, group=...)
                     if len(args) >= 2 and isinstance(args[1], torch.Tensor):
                         t = args[1]
-                        if _is_payload_tensor(t) and t.numel() >= min_numel:
+                        if (
+                            _is_payload_tensor(t)
+                            and t.numel() >= min_numel
+                            and rank == input_rank   # 2A: only input rank per node corrupts
+                        ):
                             stats = _apply_packet_loss_(
                                 t,
                                 loss,
@@ -358,7 +457,11 @@ def install_lossy_collectives(
                     # reduce_scatter_tensor(output, input, group=...)
                     if len(args) >= 2 and isinstance(args[1], torch.Tensor):
                         t = args[1]
-                        if _is_payload_tensor(t) and t.numel() >= min_numel:
+                        if (
+                            _is_payload_tensor(t)
+                            and t.numel() >= min_numel
+                            and rank == input_rank   # 2A: only input rank per node corrupts
+                        ):
                             stats = _apply_packet_loss_(
                                 t,
                                 loss,
@@ -370,7 +473,11 @@ def install_lossy_collectives(
                     # all_reduce(tensor, group=...)
                     if len(args) >= 1 and isinstance(args[0], torch.Tensor):
                         t = args[0]
-                        if _is_payload_tensor(t) and t.numel() >= min_numel:
+                        if (
+                            _is_payload_tensor(t)
+                            and t.numel() >= min_numel
+                            and rank == input_rank   # 2A: only input rank per node corrupts
+                        ):
                             _ = _apply_packet_loss_(
                                 t,
                                 loss,
@@ -390,6 +497,7 @@ def install_lossy_collectives(
                     r = 0
                 if r == 0:
                     print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
+
 
         return wrapped
 

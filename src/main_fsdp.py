@@ -197,7 +197,7 @@ def main(args):
 
     else:
         raise ValueError(f"Unsupported loss type: {loss_type}")
-    # network.set_seed(args.seed)
+    network.set_seed(args.seed)
 
     # lossy=LossyNetwork(args)
 
@@ -207,12 +207,12 @@ def main(args):
     # os.environ["LOSSY_GLOBAL_STEP"] = "0"                   # updated by callback each step
     # os.environ["LOSSY_CALL_COUNTER"] = "0"                  # per-process, used for unique masks
 
-    # optional: make randomness per-rank reproducible
+    # # optional: make randomness per-rank reproducible
     # try:
-      #   dist_inited = dist.is_available() and dist.is_initialized()
-      #   rank = dist.get_rank() if dist_inited else int(os.environ.get("RANK", "0"))
+    #     dist_inited = dist.is_available() and dist.is_initialized()
+    #     rank = dist.get_rank() if dist_inited else int(os.environ.get("RANK", "0"))
     # except Exception:
-      #   rank = 0
+    #     rank = 0
     # base_seed = getattr(args, "seed", 0)
     # lossy.set_seed(base_seed + rank)
 
@@ -220,12 +220,51 @@ def main(args):
     # enable_rs = args.loss_enable_all or args.loss_enable_rs
     # enable_ar = args.loss_enable_all or args.loss_enable_ar
 
-    # 1) install BEFORE building model/accelerator/trainer
+    # # 1) install BEFORE building model/accelerator/trainer
     # install_lossy_collectives(lossy,
-      #                         enable_allgather=enable_ag,
-        #                       enable_rs=enable_rs,
-          #                     enable_allreduce=enable_ar,
-            #                   min_numel=0)
+    #                           enable_allgather=enable_ag,
+    #                           enable_rs=enable_rs,
+    #                           enable_allreduce=enable_ar,
+    #                           min_numel=0)
+    
+    
+    # for rank aware strategy with input gpu getting loss for dist training on multiple instances
+    
+    # Use `network` everywhere as the lossy object
+    lossy = network
+
+    # Optional: env vars for logging / consistency with older code
+    os.environ["LOSS_TYPE"] = loss_type
+    os.environ["LOSS_RATE"] = str(getattr(lossy, "loss_rate", args.loss_rate))  # e.g., "0.01"
+    os.environ["LOSSY_GLOBAL_STEP"] = "0"          # updated by LossyStepBump
+    os.environ["LOSSY_CALL_COUNTER"] = "0"         # per-process, if you ever need it
+
+    # ---- Per-rank loss RNG seed (for inter-run variability on loss) ----
+    try:
+        dist_inited = dist.is_available() and dist.is_initialized()
+        rank = dist.get_rank() if dist_inited else int(os.environ.get("RANK", "0"))
+    except Exception:
+        rank = 0
+
+    base_seed = getattr(args, "seed", 0)
+    # loss seed = base_seed + rank  (you can later separate training_seed vs loss_seed)
+    lossy.set_seed(base_seed + rank)
+    # -------------------------------------------------------------------
+
+    enable_ag = args.loss_enable_all or args.loss_enable_ag
+    enable_rs = args.loss_enable_all or args.loss_enable_rs
+    enable_ar = args.loss_enable_all or args.loss_enable_ar
+
+    # 2A: install rank-aware lossy collectives
+    # IMPORTANT: this must be called BEFORE building model/Trainer/FSDP
+    install_lossy_collectives(
+        loss=lossy,
+        enable_allgather=enable_ag,
+        enable_rs=enable_rs,
+        enable_allreduce=enable_ar,
+        min_numel=0,
+        num_nodes=args.num_nodes,   # <-- NEW: tell the wrapper how many nodes there are
+    )
 
 
     # for tasks other than classification you will need to modify the callback and the compute_metrics function, as well as get model and tokenizer
