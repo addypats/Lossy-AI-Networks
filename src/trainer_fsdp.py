@@ -45,21 +45,54 @@ class FSDPProbeCallback(TrainerCallback):
                 #print(f"[R{rank}] {name or '<root>'}: local={local_elems} elems, full={full_elems} elems")
                 continue
 
-# ---- Your metrics (unchanged) ----
-def compute_classfication_metrics(eval_pred):
-    logits, labels = eval_pred
-    preds = np.argmax(logits, axis=1)
-    # debug peek
-    if len(labels) > 0:
-        try:
-            print("compute_classfication_metrics: true vs pred (first 5):",
-                  list(zip(labels[:5], preds[:5])))
-        except Exception:
-            pass
-    return {
-        "accuracy": accuracy_score(labels, preds),
-        "f1": f1_score(labels, preds, average="weighted"),
-    }
+# # ---- Your metrics (unchanged) ----
+# def compute_classfication_metrics(eval_pred):
+#     logits, labels = eval_pred
+#     preds = np.argmax(logits, axis=1)
+#     # debug peek
+#     if len(labels) > 0:
+#         try:
+#             print("compute_classfication_metrics: true vs pred (first 5):",
+#                   list(zip(labels[:5], preds[:5])))
+#         except Exception:
+#             pass
+#     return {
+#         "accuracy": accuracy_score(labels, preds),
+#         "f1": f1_score(labels, preds, average="weighted"),
+#     }
+
+
+
+# compute metrics for squad
+
+import evaluate
+
+def compute_exact_match_metric(tokenizer):
+    squad_metric = evaluate.load("squad")  # or 'squad_v2' if you move to v2
+
+    def _compute(eval_pred):
+        predictions, labels = eval_pred
+
+        # If MyQATrainer returns generated sequences (token IDs) directly:
+        pred_texts = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+
+        labels_copy = labels.copy()
+        labels_copy[labels_copy == -100] = tokenizer.pad_token_id
+        label_texts = tokenizer.batch_decode(labels_copy, skip_special_tokens=True)
+
+        squad_preds = []
+        squad_refs = []
+        for i, (p, t) in enumerate(zip(pred_texts, label_texts)):
+            squad_preds.append({"id": str(i), "prediction_text": p.strip()})
+            squad_refs.append({"id": str(i), "answers": {"text": [t.strip()], "answer_start": [0]}})
+
+        results = squad_metric.compute(predictions=squad_preds, references=squad_refs)
+        # results has 'exact_match' and 'f1'
+        return results
+
+    return _compute
+
+
 
 # ---- Your early-stop callback (kept) ----
 class MyClassifierCallback(TrainerCallback):

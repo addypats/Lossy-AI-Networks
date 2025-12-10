@@ -99,7 +99,8 @@ def get_qa_model_and_tokenizer(model_name, num_unfrozen_layers=None):
     else:
         print(f"Using existing pad token: {tokenizer.pad_token}")
 
-    tokenizer.padding_side = "left"
+    # tokenizer.padding_side = "left"
+    tokenizer.padding_side = "right"
     model.generation_config.top_p = None
     model.generation_config.temperature = None
     model.config.eos_token_id = tokenizer.eos_token_id

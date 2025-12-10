@@ -657,148 +657,59 @@ def get_hotpotqa(tokenizer, args):
     eval_dataset = eval_dataset.map(preprocess)
     return train_dataset, eval_dataset
 
-
 def get_squad(tokenizer, args):
-    max_length = 1024
-    # dataset = load_dataset("rajpurkar/squad")
+    max_length = args.max_length if args.max_length > 0 else 512
     dataset = load_dataset("squad")
-    
-    # def preprocess(data, is_train=True):
-    #     context = data["context"]
-    #     question = data["question"]
-    #     answer = data["answers"]["text"][0] if data["answers"]["text"] else ""
-        
-    #     # Format as reading comprehension task (following hotpotqa pattern)
-    #     input_text = f"""Answer the question based on the context provided. Provide a concise answer extracted from the context.
 
-    #     Context: {context}
-        
-    #     Question: {question}
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        model.resize_token_embeddings(len(tokenizer))  # if you have access here
+        model.config.pad_token_id = tokenizer.pad_token_id
 
-    #     Answer:"""
+    def preprocess(example):
+        context = example["context"]
+        question = example["question"]
+        answer = example["answers"]["text"][0] if example["answers"]["text"] else ""
 
-    #     answer = answer +' ' + tokenizer.eos_token
-
-    #     if is_train:
-    #         input_text += f" {answer}"
-    #         input_encoding = tokenizer(
-    #             input_text,
-    #             truncation=True,
-    #             padding="max_length",
-    #             max_length=max_length,
-    #             add_special_tokens=True,
-    #         )
-        
-    #         prompt_len = sum(
-    #         1 for id in input_encoding["input_ids"] if id != tokenizer.pad_token_id
-    #         )
-
-    #         labels = input_encoding["input_ids"].copy()
-    #         labels[:prompt_len] = [-100] * prompt_len
-    #         labels = input_encoding["input_ids"].copy()
-    #         labels = [label if label != tokenizer.pad_token_id else -100 for label in labels]
-        
-    #     return {
-    #         'input_ids': input_encoding["input_ids"],
-    #         'attention_mask': input_encoding["attention_mask"],
-    #         'labels': labels
-    #     }
-    
-
-    def preprocess(data, is_train=True):
-        context = data["context"]
-        question = data["question"]
-        answer = data["answers"]["text"][0] if data["answers"]["text"] else ""
-        
-        # Format as reading comprehension task
-        input_text = f"""Answer the question based on the context provided. Provide a concise answer extracted from the context.
-
-Context: {context}
-
-Question: {question}
-Answer:"""
-        
-        if is_train:
-            # For training, include the answer
-            full_text = input_text + f" {answer}" + tokenizer.eos_token
-            input_encoding = tokenizer(
-                full_text,
-                truncation=True,
-                padding="max_length",
-                max_length=max_length,
-                add_special_tokens=True,
-            )
-            
-            # Only compute loss on answer tokens
-            prompt_encoding = tokenizer(
-                input_text,
-                truncation=True,
-                padding=False,
-                add_special_tokens=True,
-            )
-            
-            # Create labels: -100 for prompt tokens, actual tokens for answer
-            labels = input_encoding["input_ids"].copy()
-            prompt_length = len(prompt_encoding["input_ids"])
-            
-            # Mask out the prompt tokens
-            for i in range(min(prompt_length, len(labels))):
-                labels[i] = -100
-                
-            # Mask out padding tokens  
-            labels = [label if label != tokenizer.pad_token_id else -100 for label in labels]
-            
-            return {
-                'input_ids': input_encoding["input_ids"],
-                'attention_mask': input_encoding["attention_mask"],
-                'labels': labels
-            }
-        else:
-            # For evaluation, don't include the answer in input
-            input_encoding = tokenizer(
-                input_text,
-                truncation=True,
-                padding="max_length",
-                max_length=max_length,
-                add_special_tokens=True,
-            )
-            
-            # For evaluation, labels should be just the answer for metric computation
-            answer_encoding = tokenizer(
-                f"Answer: {answer}",
-                truncation=True,
-                padding="max_length",
-                max_length=100,  # Shorter length for answers
-                add_special_tokens=False,
-            )
-            
-            return {
-                'input_ids': input_encoding["input_ids"],
-                'attention_mask': input_encoding["attention_mask"],
-                'labels': answer_encoding["input_ids"]
-            }
-    
-    train_dataset = dataset["train"]
-    eval_dataset = dataset["validation"]
-    
-    if args.max_samples > 0:
-        train_dataset = train_dataset.shuffle(seed=args.seed).select(
-            range(min(args.max_samples, len(train_dataset)))
+        prompt = (
+            "You are a helpful question-answering assistant.\n\n"
+            f"Context:\n{context}\n\n"
+            f"Question:\n{question}\n\n"
+            "Answer:"
         )
-        eval_dataset = eval_dataset.shuffle(seed=args.seed).select(
-            range(min(args.max_samples // 10, len(eval_dataset)))
+
+        full_text = prompt + " " + answer + tokenizer.eos_token
+
+        tokenized = tokenizer(
+            full_text,
+            truncation=True,
+            max_length=max_length,
+            padding="max_length"
         )
-    # Apply preprocessing
-    train_dataset = train_dataset.map(
-        preprocess, 
-        remove_columns=["id", "title", "context", "question", "answers"],
-        fn_kwargs={"is_train": True}
+
+        input_ids = tokenized["input_ids"]
+
+        # Mask prompt tokens in labels so loss is only on the answer
+        prompt_ids = tokenizer(
+            prompt,
+            truncation=True,
+            max_length=max_length,
+            add_special_tokens=False
+        )["input_ids"]
+
+        labels = input_ids.copy()
+        labels[:len(prompt_ids)] = [-100] * len(prompt_ids)
+        tokenized["labels"] = labels
+
+        return tokenized
+
+    train_dataset = dataset["train"].map(
+        preprocess,
+        remove_columns=dataset["train"].column_names
     )
-    eval_dataset = eval_dataset.map(
-        preprocess, 
-        remove_columns=["id", "title", "context", "question", "answers"],
-        fn_kwargs={"is_train": False}
+    eval_dataset = dataset["validation"].map(
+        preprocess,
+        remove_columns=dataset["validation"].column_names
     )
-    
-    
+
     return train_dataset, eval_dataset
