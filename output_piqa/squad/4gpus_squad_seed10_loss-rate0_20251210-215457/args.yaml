@@ -1,5 +1,5 @@
-batch_size: 8
-dataset: piqa
+batch_size: 4
+dataset: squad
 det_config: default
 epochs: 20
 eval_steps: 20
@@ -18,7 +18,7 @@ max_samples: 0
 model_name: TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T
 num_nodes: 2
 num_unfrozen_layers: null
-output_dir: output_piqa/piqa
-run_id: 4gpus_piqa_seed10_loss-rate0_20251209-205321
+output_dir: output_piqa/squad
+run_id: 4gpus_squad_seed10_loss-rate0_20251210-215457
 save_steps: 100
 seed: 10

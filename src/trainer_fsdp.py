@@ -66,32 +66,57 @@ class FSDPProbeCallback(TrainerCallback):
 # compute metrics for squad
 
 import evaluate
+import numpy as np
 
 def compute_exact_match_metric(tokenizer):
-    squad_metric = evaluate.load("squad")  # or 'squad_v2' if you move to v2
+    squad_metric = evaluate.load("squad")  # or 'squad_v2'
 
     def _compute(eval_pred):
-        predictions, labels = eval_pred
+        logits, labels = eval_pred  # logits: (batch, seq, vocab), labels: (batch, seq)
 
-        # If MyQATrainer returns generated sequences (token IDs) directly:
-        pred_texts = tokenizer.batch_decode(predictions, skip_special_tokens=True)
-
-        labels_copy = labels.copy()
-        labels_copy[labels_copy == -100] = tokenizer.pad_token_id
-        label_texts = tokenizer.batch_decode(labels_copy, skip_special_tokens=True)
+        # Argmax over vocab dimension to get predicted token IDs
+        # Shape: (batch, seq_len)
+        pred_ids = np.argmax(logits, axis=-1)
 
         squad_preds = []
         squad_refs = []
-        for i, (p, t) in enumerate(zip(pred_texts, label_texts)):
-            squad_preds.append({"id": str(i), "prediction_text": p.strip()})
-            squad_refs.append({"id": str(i), "answers": {"text": [t.strip()], "answer_start": [0]}})
 
-        results = squad_metric.compute(predictions=squad_preds, references=squad_refs)
+        batch_size = labels.shape[0]
+        for i in range(batch_size):
+            label_ids = labels[i]
+            pred_ids_i = pred_ids[i]
+
+            # Positions where we have real labels (answer tokens), not -100
+            mask = label_ids != -100
+            if not np.any(mask):
+                # No answer tokens for this example (shouldn't really happen
+                # if preprocessing is correct), skip it.
+                continue
+
+            true_answer_ids = label_ids[mask]
+            pred_answer_ids = pred_ids_i[mask]
+
+            true_text = tokenizer.decode(true_answer_ids, skip_special_tokens=True).strip()
+            pred_text = tokenizer.decode(pred_answer_ids, skip_special_tokens=True).strip()
+
+            squad_preds.append({
+                "id": str(i),
+                "prediction_text": pred_text,
+            })
+            squad_refs.append({
+                "id": str(i),
+                "answers": {"text": [true_text], "answer_start": [0]},
+            })
+
+        # Compute EM/F1
+        results = squad_metric.compute(
+            predictions=squad_preds,
+            references=squad_refs
+        )
         # results has 'exact_match' and 'f1'
         return results
 
     return _compute
-
 
 
 # ---- Your early-stop callback (kept) ----
@@ -115,9 +140,34 @@ class MyClassifierCallback(TrainerCallback):
                 f.write("")
 
     def on_evaluate(self, args, state, control, **kwargs):
-        accuracy = kwargs["metrics"].get("eval_accuracy")
+        # accuracy = kwargs["metrics"].get("eval_accuracy")
+        # if accuracy is None:
+        #     return super().on_evaluate(args, state, control, **kwargs)
+        
+        # to make it suitable for squad too
+        metrics = kwargs.get("metrics", {})
+        # Prefer eval_accuracy; fall back to eval_exact_match
+        accuracy = metrics.get("eval_accuracy", None)
+        if accuracy is None:
+            accuracy = metrics.get("eval_exact_match", None)
+
         if accuracy is None:
             return super().on_evaluate(args, state, control, **kwargs)
+
+        if accuracy > self.args['target_acc']:
+            self.counter += 1
+            if self.counter >= self.patience:
+                print(f"Target accuracy {self.args['target_acc']} reached. Stopping training.")
+                with open(self.args['report_file'], "w") as f:
+                    f.write(
+                        f"Accuracy: {accuracy:.3f}, "
+                        f"Threshold: {self.args['report_ttac'][0] if self.args['report_ttac'] else 'N/A'}, "
+                        f"Step: {state.global_step}\n"
+                    )
+                control.should_training_stop = True
+
+        return super().on_evaluate(args, state, control, **kwargs)
+
 
         if accuracy > self.args['target_acc']:
             self.counter += 1

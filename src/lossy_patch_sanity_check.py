@@ -504,8 +504,8 @@ def install_lossy_collectives(
                     r = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
                 except Exception:
                     r = 0
-                if r == 0:
-                    print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
+                # if r == 0:
+                    # print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
 
         return wrapped
         

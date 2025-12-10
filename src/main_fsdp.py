@@ -295,13 +295,19 @@ def main(args):
         'report_file' : f"{args.output_dir}/ttac_report.txt",
         'target_acc': dataset_config['target_acc'],
     }
+    #if args.dataset in generation_datasets:
+    #    callback_args['eos_token_id'] = tokenizer.eos_token_id
+    #    compute_metrics = compute_exact_match_metric(tokenizer)
+    #    callback = MyQACallback(callback_args)
+    #    trainer_class = MyQATrainer
+    #    callback = MyQACallback(callback_args)
+    #    trainer_class = MyQATrainer
     if args.dataset in generation_datasets:
         callback_args['eos_token_id'] = tokenizer.eos_token_id
         compute_metrics = compute_exact_match_metric(tokenizer)
-        callback = MyQACallback(callback_args)
-        trainer_class = MyQATrainer
-        callback = MyQACallback(callback_args)
-        trainer_class = MyQATrainer
+        # reuse classifier-style callback; it will watch EM instead of accuracy
+        callback = MyClassifierCallback(callback_args)
+        trainer_class = Trainer
     else:
         compute_metrics = compute_classfication_metrics
         callback = MyClassifierCallback(callback_args)

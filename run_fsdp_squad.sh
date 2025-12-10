@@ -5,10 +5,11 @@ set -euo pipefail
 # MODEL="Qwen/Qwen2-1.5B"
 MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
-DATASET="piqa"
+# DATASET="piqa"
+DATASET="squad"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-# LOSS_RATES=("0.01")
+LOSS_RATES=("0")
 
 # Testing
 # LOSS_RATES=("1")
@@ -26,14 +27,14 @@ GPUS_LIST=(4)
 #SEEDS=(1 2 3)
 
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
-PER_DEVICE_BS=8
+PER_DEVICE_BS=4
 LR=1e-5
 #EPOCHS=1
 #EVAL_STEPS=50
 
 # CONFIGS=("one_precent" "half_percent" "short_1percent" "short_half_percent")
 # CONFIGS=("short_1percent" "short_half_percent")
-CONFIGS=("zero")
+CONFIGS=()
 
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
@@ -41,7 +42,7 @@ CONFIGS_DET=()
 
 # GPU settings
 export CUDA_VISIBLE_DEVICES=0,1,2,3
-export WANDB_PROJECT="lossy_dist_fsdp_study"
+export WANDB_PROJECT="lossy_net_fsdp_study"
 
 
 # Logging Directory
@@ -49,17 +50,6 @@ export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs
 
 # Using Ring All-Reduce
 export NCCL_ALGO=Ring
-
-# Args for dist training
-export MASTER_ADDR=172.31.26.125     # Node 0 private IP
-export MASTER_PORT=29500
-export NNODES=2
-# export NPROC_PER_NODE=4
-
-export NCCL_SOCKET_IFNAME=ens5   # same as above
-export NCCL_IB_DISABLE=1
-export NCCL_DEBUG=INFO
-export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
 # Create output directory if it doesn't exist
 mkdir -p output_piqa
@@ -82,12 +72,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
       export RUN_ID="${run_id}"
 
       TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
-      torchrun --nnodes=$NNODES \
-  	--node_rank=0 \
-  	--master_addr=$MASTER_ADDR \
-  	--master_port=$MASTER_PORT \
-	--nproc_per_node="${gpus}" \
-	src/main_fsdp.py \
+      torchrun --nproc_per_node="${gpus}" src/main_fsdp.py \
         --model_name "${MODEL}" \
         --dataset "${DATASET}" \
         --run_id "${run_id}" \
@@ -124,13 +109,8 @@ for config in "${CONFIGS[@]}"; do
       # Make run_id visible to Python code (lossy_patch.py)
       export RUN_ID="${run_id}"
 
-      TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
-      torchrun --nnodes=$NNODES \
-        --node_rank=0 \
-        --master_addr=$MASTER_ADDR \
-        --master_port=$MASTER_PORT \
-        --nproc_per_node="${gpus}" \
-	src/main_fsdp.py \
+      TORCH_LOGS="+fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
+      torchrun --nproc_per_node="${gpus}" src/main_fsdp.py \
         --model_name "${MODEL}" \
         --dataset "${DATASET}" \
         --run_id "${run_id}" \
