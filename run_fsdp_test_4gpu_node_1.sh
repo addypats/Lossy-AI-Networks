@@ -130,11 +130,11 @@ for config in "${CONFIGS[@]}"; do
         --master_addr=$MASTER_ADDR \
         --master_port=$MASTER_PORT \
         --nproc_per_node="${gpus}" \
-        src/main_fsdp.py \ 
+        src/main_fsdp.py \
         --model_name "${MODEL}" \
         --dataset "${DATASET}" \
         --run_id "${run_id}" \
-        --batch_size "${PER_DEVICE_BS}" \
+	--batch_size "${PER_DEVICE_BS}" \
         --learning_rate "${LR}" \
         --eval_steps 20 \
         --epochs 20 \
