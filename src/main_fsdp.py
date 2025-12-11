@@ -21,7 +21,7 @@ import inspect
 # print("install_lossy_collectives sig:", inspect.signature(lossy_patch.install_lossy_collectives))
 
 classification_datasets = ['winogrande', 'mnli', 'sst2', 'hellaswag', 'piqa', 'arc', 'quality']
-generation_datasets = ['hotpotqa', 'squad']
+generation_datasets = ['hotpotqa', 'squad', 'tinysquad', 'newsqa', 'triviaqa']
 
 
 class LossyStepBump(TrainerCallback):

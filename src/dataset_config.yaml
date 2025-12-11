@@ -40,3 +40,13 @@ hotpotqa:
 squad:
   report_ttac: [0.4, 0.6, 0.8]
   target_acc: 0.8
+
+tinysquad:
+  report_ttac: [0.4, 0.5] # thresholds you care about
+  target_acc: 40 # interpreted as EM
+newsqa:
+  report_ttac: [0.3, 0.4]
+  target_acc: 30
+triviaqa:
+  report_ttac: [0.25, 0.35]
+  target_acc: 25

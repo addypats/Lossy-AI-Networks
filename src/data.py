@@ -251,6 +251,12 @@ def get_dataset(args, tokenizer):
         return get_hotpotqa(tokenizer, args)
     elif args.dataset == "squad":
         return get_squad(tokenizer, args)
+    elif args.dataset == "tinysquad":
+        return get_tinysquad(tokenizer, args)
+    elif args.dataset == "newsqa":
+        return get_newsqa(tokenizer, args)
+    elif args.dataset == "triviaqa":
+        return get_triviaqa(tokenizer, args)
     else:
         raise ValueError(f"Dataset {args.dataset} not supported.")
 
@@ -386,38 +392,6 @@ def get_cosmosqa(tokenizer, args):
     eval_dataset = eval_dataset.map(preprocess, remove_columns=["id","context", "question", "answer0", "answer1", "answer2", "answer3", "label"])
 
     return train_dataset, eval_dataset
-
-# def get_arc(tokenizer, args):
-
-#     keys = {
-#         'A': 0, 'B': 1, 'C': 2, 'D': 3, '1': 0, '2': 1, '3': 2, '4': 3,
-#     }
-#     max_length = args.max_length if args.max_length > 0 else 256
-#     dataset = load_dataset("allenai/ai2_arc", "ARC-Easy")
-#     train_dataset = dataset["train"]
-#     eval_dataset = dataset["validation"]
-#     def preprocess(data):
-
-#         question = data['question']
-#         choices = list(zip(data['choices']['text'], data['choices']['label']))
-        
-#         choices = '\n'.join([f"{label}: {text}" for text, label in choices])
-#         question = f"{question}\n\n{choices}"
-
-#         return {
-#             'input_ids': tokenizer(question, truncation=True, padding="max_length", max_length=max_length)["input_ids"],
-#             'attention_mask': tokenizer(question, truncation=True, padding="max_length", max_length=max_length)["attention_mask"],
-#             'labels': keys.get(data["answerKey"], -1)
-#         }
-        
-#     train_dataset = train_dataset.map(preprocess, remove_columns=["question", "answerKey", "choices"])
-#     eval_dataset = eval_dataset.map(preprocess, remove_columns=["question", "answerKey", "choices"])
-
-#     # Filter out invalid labels
-#     train_dataset = train_dataset.filter(lambda x: x['labels'] != -1)
-#     eval_dataset = eval_dataset.filter(lambda x: x['labels'] != -1)
-
-#     return train_dataset, eval_dataset
 
 def get_arc(tokenizer, args):
 
@@ -657,59 +631,246 @@ def get_hotpotqa(tokenizer, args):
     eval_dataset = eval_dataset.map(preprocess)
     return train_dataset, eval_dataset
 
+
+# Original working implementation of squad - use this if the other does not work
+
+# def get_squad(tokenizer, args):
+#     max_length = args.max_length if args.max_length > 0 else 512
+#     dataset = load_dataset("squad")
+
+#     if tokenizer.pad_token is None:
+#         tokenizer.pad_token = tokenizer.eos_token
+#         model.resize_token_embeddings(len(tokenizer))  # if you have access here
+#         model.config.pad_token_id = tokenizer.pad_token_id
+
+#     def preprocess(example):
+#         context = example["context"]
+#         question = example["question"]
+#         answer = example["answers"]["text"][0] if example["answers"]["text"] else ""
+
+#         prompt = (
+#             "You are a helpful question-answering assistant.\n\n"
+#             f"Context:\n{context}\n\n"
+#             f"Question:\n{question}\n\n"
+#             "Answer:"
+#         )
+
+#         full_text = prompt + " " + answer + tokenizer.eos_token
+
+#         tokenized = tokenizer(
+#             full_text,
+#             truncation=True,
+#             max_length=max_length,
+#             padding="max_length"
+#         )
+
+#         input_ids = tokenized["input_ids"]
+
+#         # Mask prompt tokens in labels so loss is only on the answer
+#         prompt_ids = tokenizer(
+#             prompt,
+#             truncation=True,
+#             max_length=max_length,
+#             add_special_tokens=False
+#         )["input_ids"]
+
+#         labels = input_ids.copy()
+#         labels[:len(prompt_ids)] = [-100] * len(prompt_ids)
+#         tokenized["labels"] = labels
+
+#         return tokenized
+
+#     train_dataset = dataset["train"].map(
+#         preprocess,
+#         remove_columns=dataset["train"].column_names
+#     )
+#     eval_dataset = dataset["validation"].map(
+#         preprocess,
+#         remove_columns=dataset["validation"].column_names
+#     )
+
+#     return train_dataset, eval_dataset
+
+
+def _build_qa_example(tokenizer, context, question, answer, max_length):
+    """
+    Shared helper to create a generative QA example:
+    prompt = system + context + question, label = answer (prompt tokens masked with -100).
+    """
+    if answer is None:
+        answer = ""
+    answer = str(answer)
+
+    prompt = (
+        "You are a helpful question-answering assistant.\n\n"
+        f"Context:\n{context}\n\n"
+        f"Question:\n{question}\n\n"
+        "Answer:"
+    )
+
+    full_text = prompt + " " + answer + (tokenizer.eos_token or "")
+
+    tokenized = tokenizer(
+        full_text,
+        truncation=True,
+        max_length=max_length,
+        padding="max_length",
+    )
+
+    input_ids = tokenized["input_ids"]
+
+    # Mask prompt tokens in labels so loss is only on the answer
+    prompt_ids = tokenizer(
+        prompt,
+        truncation=True,
+        max_length=max_length,
+        add_special_tokens=False,
+    )["input_ids"]
+
+    labels = input_ids.copy()
+    labels[:len(prompt_ids)] = [-100] * len(prompt_ids)
+    tokenized["labels"] = labels
+
+    return tokenized
+
+
 def get_squad(tokenizer, args):
+    # Full SQuAD – this is the heavy one
     max_length = args.max_length if args.max_length > 0 else 512
     dataset = load_dataset("squad")
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        model.resize_token_embeddings(len(tokenizer))  # if you have access here
-        model.config.pad_token_id = tokenizer.pad_token_id
 
     def preprocess(example):
         context = example["context"]
         question = example["question"]
+        # SQuAD has answers["text"] list
         answer = example["answers"]["text"][0] if example["answers"]["text"] else ""
+        return _build_qa_example(tokenizer, context, question, answer, max_length)
 
-        prompt = (
-            "You are a helpful question-answering assistant.\n\n"
-            f"Context:\n{context}\n\n"
-            f"Question:\n{question}\n\n"
-            "Answer:"
+    train_dataset = dataset["train"]
+    eval_dataset = dataset["validation"]
+
+    # Optional subsampling for memory-scarce setups
+    if getattr(args, "max_samples", 0) > 0:
+        train_dataset = train_dataset.shuffle(seed=args.seed).select(
+            range(min(args.max_samples, len(train_dataset)))
         )
 
-        full_text = prompt + " " + answer + tokenizer.eos_token
-
-        tokenized = tokenizer(
-            full_text,
-            truncation=True,
-            max_length=max_length,
-            padding="max_length"
-        )
-
-        input_ids = tokenized["input_ids"]
-
-        # Mask prompt tokens in labels so loss is only on the answer
-        prompt_ids = tokenizer(
-            prompt,
-            truncation=True,
-            max_length=max_length,
-            add_special_tokens=False
-        )["input_ids"]
-
-        labels = input_ids.copy()
-        labels[:len(prompt_ids)] = [-100] * len(prompt_ids)
-        tokenized["labels"] = labels
-
-        return tokenized
-
-    train_dataset = dataset["train"].map(
+    train_dataset = train_dataset.map(
         preprocess,
-        remove_columns=dataset["train"].column_names
+        remove_columns=train_dataset.column_names,
     )
-    eval_dataset = dataset["validation"].map(
+    eval_dataset = eval_dataset.map(
         preprocess,
-        remove_columns=dataset["validation"].column_names
+        remove_columns=eval_dataset.column_names,
     )
-
     return train_dataset, eval_dataset
+
+
+def get_tinysquad(tokenizer, args):
+    """
+    TinySQuAD (zakerytclarke/tinysquad):
+    - Single 'train' split with fields: title, context, question, answer
+    - We'll create a small validation split ourselves.
+    """
+    max_length = args.max_length if args.max_length > 0 else 256
+    raw = load_dataset("zakerytclarke/tinysquad")  # single 'train' split
+
+    full_train = raw["train"]
+
+    # Optional: limit training size to avoid OOM
+    if getattr(args, "max_samples", 0) > 0:
+        full_train = full_train.shuffle(seed=args.seed).select(
+            range(min(args.max_samples, len(full_train)))
+        )
+
+    # 90/10 train/val split from the single split
+    split = full_train.train_test_split(test_size=0.1, seed=args.seed)
+    train_raw = split["train"]
+    eval_raw = split["test"]
+
+    def preprocess(example):
+        context = example["context"]
+        question = example["question"]
+        answer = example["answer"]
+        return _build_qa_example(tokenizer, context, question, answer, max_length)
+
+    train_dataset = train_raw.map(
+        preprocess,
+        remove_columns=train_raw.column_names,
+    )
+    eval_dataset = eval_raw.map(
+        preprocess,
+        remove_columns=eval_raw.column_names,
+    )
+    return train_dataset, eval_dataset
+
+
+def get_newsqa(tokenizer, args):
+    """
+    NewsQA (lucadiliello/newsqa):
+    - Splits: train, validation
+    - Fields: context, question, labels (list of answer strings)
+    """
+    max_length = args.max_length if args.max_length > 0 else 256
+    dataset = load_dataset("lucadiliello/newsqa")
+
+    train_raw = dataset["train"]
+    eval_raw = dataset["validation"]
+
+    if getattr(args, "max_samples", 0) > 0:
+        train_raw = train_raw.shuffle(seed=args.seed).select(
+            range(min(args.max_samples, len(train_raw)))
+        )
+
+    def preprocess(example):
+        context = example["context"]
+        question = example["question"]
+        labels = example.get("labels", [])
+        answer = labels[0] if labels else ""
+        return _build_qa_example(tokenizer, context, question, answer, max_length)
+
+    train_dataset = train_raw.map(
+        preprocess,
+        remove_columns=train_raw.column_names,
+    )
+    eval_dataset = eval_raw.map(
+        preprocess,
+        remove_columns=eval_raw.column_names,
+    )
+    return train_dataset, eval_dataset
+
+
+def get_triviaqa(tokenizer, args):
+    """
+    TriviaQA (lucadiliello/triviaqa):
+    - Splits: train, validation
+    - Fields: context, question, labels (list of answer strings)
+    """
+    max_length = args.max_length if args.max_length > 0 else 256
+    dataset = load_dataset("lucadiliello/triviaqa")
+
+    train_raw = dataset["train"]
+    eval_raw = dataset["validation"]
+
+    if getattr(args, "max_samples", 0) > 0:
+        train_raw = train_raw.shuffle(seed=args.seed).select(
+            range(min(args.max_samples, len(train_raw)))
+        )
+
+    def preprocess(example):
+        context = example["context"]
+        question = example["question"]
+        labels = example.get("labels", [])
+        answer = labels[0] if labels else ""
+        return _build_qa_example(tokenizer, context, question, answer, max_length)
+
+    train_dataset = train_raw.map(
+        preprocess,
+        remove_columns=train_raw.column_names,
+    )
+    eval_dataset = eval_raw.map(
+        preprocess,
+        remove_columns=eval_raw.column_names,
+    )
+    return train_dataset, eval_dataset
+
