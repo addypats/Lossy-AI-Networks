@@ -46,20 +46,20 @@ class FSDPProbeCallback(TrainerCallback):
                 continue
 
 # # ---- Your metrics (unchanged) ----
-# def compute_classfication_metrics(eval_pred):
-#     logits, labels = eval_pred
-#     preds = np.argmax(logits, axis=1)
-#     # debug peek
-#     if len(labels) > 0:
-#         try:
-#             print("compute_classfication_metrics: true vs pred (first 5):",
-#                   list(zip(labels[:5], preds[:5])))
-#         except Exception:
-#             pass
-#     return {
-#         "accuracy": accuracy_score(labels, preds),
-#         "f1": f1_score(labels, preds, average="weighted"),
-#     }
+def compute_classfication_metrics(eval_pred):
+    logits, labels = eval_pred
+    preds = np.argmax(logits, axis=1)
+    # debug peek
+    if len(labels) > 0:
+        try:
+            print("compute_classfication_metrics: true vs pred (first 5):",
+                  list(zip(labels[:5], preds[:5])))
+        except Exception:
+            pass
+    return {
+        "accuracy": accuracy_score(labels, preds),
+        "f1": f1_score(labels, preds, average="weighted"),
+    }
 
 
 

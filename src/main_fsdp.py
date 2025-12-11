@@ -2,7 +2,7 @@
 # Original Pegah's code
 # from comms import LossyNetwork, GillbertElliotLossyNetwork
 from comms_fsdp_dist import LossyNetwork, GillbertElliotLossyNetwork
-from trainer_fsdp import MyClassifierCallback, compute_exact_match_metric, FSDPProbeCallback
+from trainer_fsdp import MyClassifierCallback, compute_exact_match_metric, compute_classfication_metrics, FSDPProbeCallback
 from data import get_dataset
 from transformers import TrainingArguments, Trainer, TrainerCallback
 import os
