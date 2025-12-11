@@ -125,7 +125,12 @@ for config in "${CONFIGS[@]}"; do
       export RUN_ID="${run_id}"
 
       TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
-      torchrun --nproc_per_node="${gpus}" src/main_fsdp.py \
+      torchrun --nnodes=$NNODES \
+        --node_rank=1 \
+        --master_addr=$MASTER_ADDR \
+        --master_port=$MASTER_PORT \
+        --nproc_per_node="${gpus}" \
+        src/main_fsdp.py \ 
         --model_name "${MODEL}" \
         --dataset "${DATASET}" \
         --run_id "${run_id}" \
