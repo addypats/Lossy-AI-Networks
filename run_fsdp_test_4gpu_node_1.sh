@@ -139,7 +139,7 @@ for config in "${CONFIGS[@]}"; do
         --eval_steps 20 \
         --epochs 20 \
         --loss_type "g-e" \
-        --ge_config "$config"
+        --ge_config "$config" \
         --loss-enable-all \
         --seed "${seed}" \
         --output_dir "${output_dir}" \
