@@ -7,7 +7,7 @@ MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=("0" "0.005" "0.01")
+# LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0")
 
 # Testing
@@ -124,7 +124,7 @@ for config in "${CONFIGS[@]}"; do
       # Make run_id visible to Python code (lossy_patch.py)
       export RUN_ID="${run_id}"
 
-      TORCH_LOGS="+fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
+      TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
       torchrun --nproc_per_node="${gpus}" src/main_fsdp.py \
         --model_name "${MODEL}" \
         --dataset "${DATASET}" \
