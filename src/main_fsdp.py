@@ -303,7 +303,7 @@ def main(args):
     #    callback = MyQACallback(callback_args)
     #    trainer_class = MyQATrainer
     if args.dataset in generation_datasets:
-        callback_args['eos_token_id'] = tokenizer.eos_token_id
+        # callback_args['eos_token_id'] = tokenizer.eos_token_id
         compute_metrics = compute_exact_match_metric(tokenizer)
         # reuse classifier-style callback; it will watch EM instead of accuracy
         callback = MyClassifierCallback(callback_args)
@@ -312,11 +312,15 @@ def main(args):
         compute_metrics = compute_classfication_metrics
         callback = MyClassifierCallback(callback_args)
         trainer_class = Trainer
-    
+   
+    is_qa = args.dataset in generation_datasets
+
+    eval_bs = args.batch_size // 2 if is_qa else args.batch_size
+
     training_args = TrainingArguments(
         output_dir=output_dir,
         per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
+        per_device_eval_batch_size=eval_bs,
         num_train_epochs=args.epochs,
         learning_rate= args.learning_rate,
         weight_decay=0.01,
@@ -343,6 +347,9 @@ def main(args):
         gradient_checkpointing=False,                          # extra memory headroom
         ddp_find_unused_parameters=False,                     # usually better with FSDP
         ddp_backend="nccl",
+        
+        # 🔹 KEY NEW BITS FOR QA
+        eval_accumulation_steps=1,      # flush eval tensors to CPU every step
     )
 
     # optimizer = AdamW

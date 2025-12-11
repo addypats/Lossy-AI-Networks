@@ -747,7 +747,7 @@ def get_squad(tokenizer, args):
         return _build_qa_example(tokenizer, context, question, answer, max_length)
 
     train_dataset = dataset["train"]
-    eval_dataset = dataset["validation"]
+    eval_dataset_raw = dataset["validation"]
 
     # Optional subsampling for memory-scarce setups
     if getattr(args, "max_samples", 0) > 0:
@@ -755,13 +755,17 @@ def get_squad(tokenizer, args):
             range(min(args.max_samples, len(train_dataset)))
         )
 
+    # 🔹 HARD CAP eval size to avoid logits-OOM
+    MAX_EVAL_EXAMPLES = 256
+    eval_dataset_raw = eval_dataset_raw.select(range(min(MAX_EVAL_EXAMPLES, len(eval_dataset_raw))))
+
     train_dataset = train_dataset.map(
         preprocess,
         remove_columns=train_dataset.column_names,
     )
-    eval_dataset = eval_dataset.map(
+    eval_dataset = eval_dataset_raw.map(
         preprocess,
-        remove_columns=eval_dataset.column_names,
+        remove_columns=eval_dataset_raw.column_names,
     )
     return train_dataset, eval_dataset
 
@@ -793,6 +797,10 @@ def get_tinysquad(tokenizer, args):
         question = example["question"]
         answer = example["answer"]
         return _build_qa_example(tokenizer, context, question, answer, max_length)
+
+    # 🔹 HARD CAP eval size to avoid logits-OOM
+    MAX_EVAL_EXAMPLES = 512
+    eval_raw = eval_raw.select(range(min(MAX_EVAL_EXAMPLES, len(eval_raw))))
 
     train_dataset = train_raw.map(
         preprocess,
@@ -829,6 +837,10 @@ def get_newsqa(tokenizer, args):
         answer = labels[0] if labels else ""
         return _build_qa_example(tokenizer, context, question, answer, max_length)
 
+    # 🔹 HARD CAP eval size to avoid logits-OOM
+    MAX_EVAL_EXAMPLES = 256
+    eval_raw = eval_raw.select(range(min(MAX_EVAL_EXAMPLES, len(eval_raw))))
+
     train_dataset = train_raw.map(
         preprocess,
         remove_columns=train_raw.column_names,
@@ -863,6 +875,10 @@ def get_triviaqa(tokenizer, args):
         labels = example.get("labels", [])
         answer = labels[0] if labels else ""
         return _build_qa_example(tokenizer, context, question, answer, max_length)
+
+    # 🔹 HARD CAP eval size to avoid logits-OOM
+    MAX_EVAL_EXAMPLES = 256
+    eval_raw = eval_raw.select(range(min(MAX_EVAL_EXAMPLES, len(eval_raw))))
 
     train_dataset = train_raw.map(
         preprocess,

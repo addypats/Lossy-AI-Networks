@@ -6,7 +6,11 @@ set -euo pipefail
 MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
 # DATASET="piqa"
-DATASET="squad"
+# DATASET="squad"
+# DATASET="tinysquad"
+# DATASET="newsqa"
+DATASET="triviaqa"
+
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
 LOSS_RATES=("0")
@@ -27,7 +31,7 @@ GPUS_LIST=(4)
 #SEEDS=(1 2 3)
 
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
-PER_DEVICE_BS=4
+PER_DEVICE_BS=8
 LR=1e-5
 #EPOCHS=1
 #EVAL_STEPS=50

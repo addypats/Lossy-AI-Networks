@@ -43,10 +43,12 @@ squad:
 
 tinysquad:
   report_ttac: [0.4, 0.5] # thresholds you care about
-  target_acc: 40 # interpreted as EM
+  target_acc: 0.65 # interpreted as EM
+
 newsqa:
   report_ttac: [0.3, 0.4]
   target_acc: 30
+
 triviaqa:
   report_ttac: [0.25, 0.35]
   target_acc: 25

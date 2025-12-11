@@ -76,7 +76,25 @@ def compute_exact_match_metric(tokenizer):
 
         # Argmax over vocab dimension to get predicted token IDs
         # Shape: (batch, seq_len)
-        pred_ids = np.argmax(logits, axis=-1)
+        # pred_ids = np.argmax(logits, axis=-1)
+
+        # Convert to numpy in case HF gives torch tensors
+        if not isinstance(logits, np.ndarray):
+            logits_np = np.array(logits)
+        else:
+            logits_np = logits
+
+        if not isinstance(labels, np.ndarray):
+            labels_np = np.array(labels)
+        else:
+            labels_np = labels
+
+        # Argmax over vocab dimension to get predicted token IDs: (batch, seq_len)
+        if logits_np.ndim == 3:
+            pred_ids = np.argmax(logits_np, axis=-1)
+        else:
+            # Just in case predictions are already token IDs
+            pred_ids = logits_np
 
         squad_preds = []
         squad_refs = []
