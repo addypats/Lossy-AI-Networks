@@ -7,7 +7,7 @@ MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
-# LOSS_RATES=("0" "0.005" "0.01")
+LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0.01")
 
 # Testing
@@ -33,7 +33,7 @@ LR=1e-5
 
 # CONFIGS=("one_precent" "half_percent" "short_1percent" "short_half_percent")
 # CONFIGS=("short_1percent" "short_half_percent")
-CONFIGS=("half_percent" "short_1percent" "short_half_percent")
+CONFIGS=()
 
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
