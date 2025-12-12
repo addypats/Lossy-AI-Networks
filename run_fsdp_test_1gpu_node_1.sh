@@ -7,8 +7,8 @@ MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=("0" "0.005" "0.01")
-# LOSS_RATES=("0.01")
+# LOSS_RATES=("0" "0.005" "0.01")
+LOSS_RATES=("0.01")
 
 # Testing
 # LOSS_RATES=("1")
@@ -53,7 +53,7 @@ export NCCL_ALGO=Ring
 # Args for dist training
 export MASTER_ADDR=172.31.12.217    # Node 0 private IP
 export MASTER_PORT=29500
-export NNODES=2
+export NNODES=8
 # export NPROC_PER_NODE=4
 
 export NCCL_SOCKET_IFNAME=enp39s0   # same as above
