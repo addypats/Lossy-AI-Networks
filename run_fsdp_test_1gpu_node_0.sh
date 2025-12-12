@@ -31,9 +31,9 @@ LR=1e-5
 #EPOCHS=1
 #EVAL_STEPS=50
 
-# CONFIGS=("one_precent" "half_percent" "short_1percent" "short_half_percent")
+CONFIGS=("one_precent" "half_percent" "short_1percent" "short_half_percent")
 # CONFIGS=("short_1percent" "short_half_percent")
-CONFIGS=("half_percent" "short_1percent" "short_half_percent")
+# CONFIGS=("half_percent" "short_1percent" "short_half_percent")
 
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
@@ -51,9 +51,9 @@ export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs
 export NCCL_ALGO=Ring
 
 # Args for dist training
-export MASTER_ADDR=     # Node 0 private IP
+export MASTER_ADDR=172.31.12.217     # Node 0 private IP
 export MASTER_PORT=29500
-export NNODES=8
+export NNODES=1
 # export NPROC_PER_NODE=4
 
 export NCCL_SOCKET_IFNAME=ens5   # same as above
@@ -99,7 +99,8 @@ for loss_rate in "${LOSS_RATES[@]}"; do
 	--loss-enable-all \
         --seed "${seed}" \
         --output_dir "${output_dir}" \
-        --fp16
+        --fp16 \
+	--num_nodes "${NNODES}"
 
       echo "Completed experiment: $run_id"
       echo "--------------------------------"
@@ -143,7 +144,8 @@ for config in "${CONFIGS[@]}"; do
         --loss-enable-all \
         --seed "${seed}" \
         --output_dir "${output_dir}" \
-        --fp16
+        --fp16 \
+	--num_nodes "${NNODES}"
 
       echo "Completed experiment: $run_id"
       echo "--------------------------------"
