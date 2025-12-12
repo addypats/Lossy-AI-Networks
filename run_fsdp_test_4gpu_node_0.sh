@@ -99,7 +99,8 @@ for loss_rate in "${LOSS_RATES[@]}"; do
 	--loss-enable-all \
         --seed "${seed}" \
         --output_dir "${output_dir}" \
-        --fp16
+        --fp16 \
+	--num_nodes "${NNODES}"
 
       echo "Completed experiment: $run_id"
       echo "--------------------------------"
@@ -143,7 +144,8 @@ for config in "${CONFIGS[@]}"; do
         --loss-enable-all \
         --seed "${seed}" \
         --output_dir "${output_dir}" \
-        --fp16
+        --fp16 \
+	--num_nodes "${NNODES}"
 
       echo "Completed experiment: $run_id"
       echo "--------------------------------"
