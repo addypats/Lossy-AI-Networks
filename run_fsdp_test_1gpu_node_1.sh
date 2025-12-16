@@ -7,8 +7,8 @@ MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
-# LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=("0.01")
+LOSS_RATES=("0" "0.005" "0.01")
+# LOSS_RATES=("0.01")
 
 # Testing
 # LOSS_RATES=("1")
@@ -16,8 +16,8 @@ LOSS_RATES=("0.01")
 # NUM_NODES=("2" "4" "8" "10")
 # NUM_NODES=("8" "10")
 #NUM_NODES=("2")
-# SEEDS=("10" "20" "30" "40" "50")
-SEEDS=(10)
+SEEDS=("10" "20" "30" "40" "50")
+# SEEDS=(10)
 
 
 # GPUs on this machine (e.g., 4 GPUs)
@@ -31,7 +31,7 @@ LR=1e-5
 #EPOCHS=1
 #EVAL_STEPS=50
 
-CONFIGS=("one_precent" "half_percent" "short_1percent" "short_half_percent")
+# CONFIGS=("one_precent" "half_percent" "short_1percent" "short_half_percent")
 # CONFIGS=("short_1percent" "short_half_percent")
 # CONFIGS=("half_percent" "short_1percent" "short_half_percent")
 
