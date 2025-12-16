@@ -8,7 +8,7 @@ MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=("0.005" "0.01")
+LOSS_RATES=("0.01")
 
 # Testing
 # LOSS_RATES=("1")
