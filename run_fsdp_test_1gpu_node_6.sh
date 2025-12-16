@@ -155,6 +155,43 @@ done
 
 echo "All ge fsdp exp completed"
 
+echo "Starting fsdp det experiments!"
+
+for config in "${CONFIGS_DET[@]}"; do
+  for nodes in "${NUM_NODES[@]}"; do
+    for seed in "${SEEDS[@]}"; do
+      run_id="det_${MODEL_ALIAS}_${nodes}nodes_${DATASET}_lr_${config}"
+      output_dir="output_piqa/ge_${MODEL_ALIAS}_output/${DATASET}"
+      echo "Starting experiment: $run_id"
+      # Run the experiment
+      torchrun --nnodes=$NNODES \
+        --node_rank=6 \
+        --master_addr=$MASTER_ADDR \
+        --master_port=$MASTER_PORT \
+        --nproc_per_node="${gpus}" \
+        src/main.py \
+        --model_name "$MODEL" \
+        --dataset "$DATASET" \
+        --num_nodes "$nodes" \
+        --batch_size "${PER_DEVICE_BS}" \
+        --learning_rate "${LR}" \
+        --run_id "$run_id" \
+        --epochs 20 \
+        --seed "$seed" \
+        --output_dir "$output_dir" \
+              --eval_steps 20 \
+        --loss-enable-all \
+        --loss_type "det" \
+        --det_config "$config" \
+        --num_nodes "${NNODES}"
+      echo "Completed experiment: $run_id"
+      echo "--------------------------------"
+    done
+  done
+done
+
+echo "All fsdp det experiments completed"
+
 echo "All fsdp experiments completed!"
 
 # echo "All experiments completed!"

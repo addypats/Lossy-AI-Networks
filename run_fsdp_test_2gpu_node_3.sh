@@ -40,7 +40,7 @@ LR=1e-5
 CONFIGS_DET=()
 
 # GPU settings
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0,1
 export WANDB_PROJECT="lossy_dist_fsdp_study"
 
 
@@ -51,12 +51,12 @@ export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs
 export NCCL_ALGO=Ring
 
 # Args for dist training
-export MASTER_ADDR=172.31.12.217     # Node 0 private IP
+export MASTER_ADDR=     # Node 0 private IP
 export MASTER_PORT=29500
-export NNODES=8
+export NNODES=4
 # export NPROC_PER_NODE=4
 
-export NCCL_SOCKET_IFNAME=enp39s0   # same as above
+export NCCL_SOCKET_IFNAME=   # same as above
 export NCCL_IB_DISABLE=1
 export NCCL_DEBUG=INFO
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
