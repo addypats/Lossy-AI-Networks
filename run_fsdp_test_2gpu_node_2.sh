@@ -23,7 +23,7 @@ SEEDS=("10" "20" "30")
 
 # GPUs on this machine (e.g., 4 GPUs)
 # GPUS_LIST=(1 2 4)
-GPUS_LIST=(1)
+GPUS_LIST=(2)
 #SEEDS=(1 2 3)
 
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
