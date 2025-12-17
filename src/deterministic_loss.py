@@ -393,17 +393,44 @@ class DeterministicBurstLossyNetwork:
         self._roll_episode_if_needed(next_state)
         return mask
 
+    # def receive(self, data: torch.Tensor, packets_mask: torch.Tensor) -> torch.Tensor:
+    #     if packets_mask.all():
+    #         return data
+    #     num_packets = len(packets_mask)
+    #     number_per_packet = MAX_PAYLOAD_BYTES // data.element_size() + 1
+    #     flat = data.flatten()
+    #     indices = torch.arange(num_packets * number_per_packet, device=data.device)
+    #     indices = indices[indices < flat.numel()]
+    #     mask = packets_mask.repeat_interleave(number_per_packet)[:indices.numel()]
+    #     flat[~mask] = 0.0
+    #     return flat.view_as(data)
+    
     def receive(self, data: torch.Tensor, packets_mask: torch.Tensor) -> torch.Tensor:
+        # packets_mask: True = keep, False = drop
         if packets_mask.all():
             return data
-        num_packets = len(packets_mask)
-        number_per_packet = MAX_PAYLOAD_BYTES // data.element_size() + 1
-        flat = data.flatten()
-        indices = torch.arange(num_packets * number_per_packet, device=data.device)
-        indices = indices[indices < flat.numel()]
-        mask = packets_mask.repeat_interleave(number_per_packet)[:indices.numel()]
-        flat[~mask] = 0.0
-        return flat.view_as(data)
+
+        flat = data.view(-1)
+
+        # how many tensor elements correspond to one "packet"
+        elems_per_packet = MAX_PAYLOAD_BYTES // data.element_size() + 1
+
+        # get dropped packet indices (do this on CPU to avoid GPU temp allocations)
+        if packets_mask.is_cuda:
+            drop_idx = (~packets_mask).nonzero(as_tuple=False).view(-1).cpu()
+        else:
+            drop_idx = (~packets_mask).nonzero(as_tuple=False).view(-1)
+
+        # zero the corresponding ranges in-place (bounded; no huge temp tensors)
+        for p in drop_idx.tolist():
+            start = p * elems_per_packet
+            if start >= flat.numel():
+                break
+            end = min(start + elems_per_packet, flat.numel())
+            flat[start:end] = 0
+
+        return data
+
 
     def finalize(self):
         self._close_episode()
