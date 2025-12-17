@@ -180,7 +180,6 @@ for config in "${CONFIGS_DET[@]}"; do
         src/main.py \
         --model_name "$MODEL" \
         --dataset "$DATASET" \
-        --num_nodes "$nodes" \
         --batch_size "${PER_DEVICE_BS}" \
         --learning_rate "${LR}" \
         --run_id "$run_id" \
