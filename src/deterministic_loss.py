@@ -154,6 +154,12 @@ class DeterministicBurstLossyNetwork:
         print(f"[{self.run_id}] T={self.T_steps}, N={self.N}, L={self.L_overall}, "
               f"lrg={self.lrg}, lrb={self.lrb}, piB={self.piB:.6f}, B={self.B}, Eb={self.Eb:.3f}, rho={self.rho:.6f}")
 
+    def set_seed(self, seed: int):
+        """Override the RNG seed used for packet-drop mask generation."""
+        self.seed = int(seed)
+        return self
+
+
     @classmethod
     def from_params(cls,
         *,
