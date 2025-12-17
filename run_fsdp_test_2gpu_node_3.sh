@@ -161,7 +161,7 @@ echo "Starting fsdp det experiments!"
 for config in "${CONFIGS_DET[@]}"; do
   for gpus in "${GPUS_LIST[@]}"; do
     for seed in "${SEEDS[@]}"; do
-      tts=$(date +%Y%m%d-%H%M%S)
+      ts=$(date +%Y%m%d-%H%M%S)
 
       run_id="${gpus}gpus_${DATASET}_seed${seed}_loss-rate_${config}_${ts}"
       output_dir="output_piqa/${DATASET}"
