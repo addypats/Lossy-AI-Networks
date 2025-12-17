@@ -177,7 +177,7 @@ for config in "${CONFIGS_DET[@]}"; do
         --master_addr=$MASTER_ADDR \
         --master_port=$MASTER_PORT \
         --nproc_per_node="${gpus}" \
-        src/main.py \
+        src/main_fsdp.py \
         --model_name "$MODEL" \
         --dataset "$DATASET" \
         --batch_size "${PER_DEVICE_BS}" \
