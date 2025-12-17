@@ -8,7 +8,7 @@ MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=("0.01")
+LOSS_RATES=()
 
 # Testing
 # LOSS_RATES=("1")
@@ -18,7 +18,7 @@ LOSS_RATES=("0.01")
 #NUM_NODES=("2")
 # SEEDS=("10" "20" "30" "40" "50")
 # SEEDS=("10" "20" "30")
-SEEDS=("30")
+SEEDS=("10")
 
 
 # GPUs on this machine (e.g., 4 GPUs)
@@ -38,7 +38,7 @@ LR=1e-5
 
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
-CONFIGS_DET=()
+CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3")
 
 # GPU settings
 export CUDA_VISIBLE_DEVICES=0,1
