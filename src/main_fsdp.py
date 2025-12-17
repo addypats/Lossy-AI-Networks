@@ -141,60 +141,60 @@ def main(args):
                                              seed=seed, nodes=nodes)
         network.set_seed(args.seed)
     
-    # elif loss_type == 'det':
-    #     import pandas as pd
-    #     from deterministic_loss import DeterministicBurstLossyNetwork
-    #     # Deterministic, GE-free, CSV-driven burst loss model
-    #     # We keep using args.ge_config as the run_id to avoid changing your launch scripts.
-    #     configs = pd.read_csv('runs_profile_det.csv')
-    #     run_id    = args.det_config        # e.g., "A3", "B2"
-    #     model_name = args.model_name
-    #     task       = args.dataset
-    #     seed       = args.seed
-    #     nodes      = args.num_nodes
+    elif loss_type == 'det':
+        import pandas as pd
+        from deterministic_loss import DeterministicBurstLossyNetwork
+        # Deterministic, GE-free, CSV-driven burst loss model
+        # We keep using args.ge_config as the run_id to avoid changing your launch scripts.
+        configs = pd.read_csv('runs_profile_det.csv')
+        run_id    = args.det_config        # e.g., "A3", "B2"
+        model_name = args.model_name
+        task       = args.dataset
+        seed       = args.seed
+        nodes      = args.num_nodes
 
-    #     # Load the CSV with all deterministic experiment configs
-    #     # df = pd.read_csv(csv_path)
+        # Load the CSV with all deterministic experiment configs
+        # df = pd.read_csv(csv_path)
 
-    #     # Helper casting functions
-    #     def to_int(x):   return int(x)
-    #     def to_float(x): return float(x)
-    #     def to_str(x):   return str(x)
+        # Helper casting functions
+        def to_int(x):   return int(x)
+        def to_float(x): return float(x)
+        def to_str(x):   return str(x)
 
-    #      # Find matching row by run_id (the column name in your CSV)
-    #     row = configs.loc[configs["runs_id"] == run_id]
-    #     if row.empty:
-    #         raise ValueError(f"id '{runs_id}' not found in {configs}. "
-    #                          f"Available: {configs['runs_id'].tolist()}")
-    #     r = row.iloc[0]   # <-- define r before using it
+         # Find matching row by run_id (the column name in your CSV)
+        row = configs.loc[configs["runs_id"] == run_id]
+        if row.empty:
+            raise ValueError(f"id '{runs_id}' not found in {configs}. "
+                             f"Available: {configs['runs_id'].tolist()}")
+        r = row.iloc[0]   # <-- define r before using it
 
-    #     # import os
+        # import os
 
-    #     run_id_str = str(r["runs_id"])        # e.g., "high_persistence_low_intensity_1"
+        run_id_str = str(r["runs_id"])        # e.g., "high_persistence_low_intensity_1"
 
-    #     # Create a subfolder inside det_logs/
-    #     log_dir = os.path.join("det_logs", run_id_str)
-    #     os.makedirs(log_dir, exist_ok=True)
+        # Create a subfolder inside det_logs/
+        log_dir = os.path.join("det_logs", run_id_str)
+        os.makedirs(log_dir, exist_ok=True)
 
-    #     # Instantiate directly from CSV; no pandas needed and no recomputation inside the class.
-    #     # det_config = configs[configs['id'] == args.det_config].iloc[0]
-    #     network = DeterministicBurstLossyNetwork.from_params(
-    #         run_id    = to_str(r["runs_id"]),
-    #         T_steps   = to_int(r["T_steps"]),
-    #         N         = to_int(r["N"]),
-    #         L_overall = to_float(r["L_overall"]),
-    #         lrg       = to_float(r["lrg"]),
-    #         lrb       = to_float(r["lrb"]),
-    #         piB       = to_float(r["piB"]),
-    #         B         = to_int(r["B"]),
-    #         Eb        = to_float(r["Eb"]),
-    #         rho       = to_float(r["rho"]),
-    #         seed      = to_int(r["seed"]),
-    #         skew_frac = to_float(r["skew_frac"]),
-    #         gap_mode  = to_str(r["gap_mode"]),
-    #         log_dir   = log_dir,
-    #         strict_validate = True
-    #     )
+        # Instantiate directly from CSV; no pandas needed and no recomputation inside the class.
+        # det_config = configs[configs['id'] == args.det_config].iloc[0]
+        network = DeterministicBurstLossyNetwork.from_params(
+            run_id    = to_str(r["runs_id"]),
+            T_steps   = to_int(r["T_steps"]),
+            N         = to_int(r["N"]),
+            L_overall = to_float(r["L_overall"]),
+            lrg       = to_float(r["lrg"]),
+            lrb       = to_float(r["lrb"]),
+            piB       = to_float(r["piB"]),
+            B         = to_int(r["B"]),
+            Eb        = to_float(r["Eb"]),
+            rho       = to_float(r["rho"]),
+            seed      = to_int(r["seed"]),
+            skew_frac = to_float(r["skew_frac"]),
+            gap_mode  = to_str(r["gap_mode"]),
+            log_dir   = log_dir,
+            strict_validate = True
+        )
 
     else:
         raise ValueError(f"Unsupported loss type: {loss_type}")
