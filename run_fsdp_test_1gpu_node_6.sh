@@ -18,8 +18,8 @@ DATASET="piqa"
 #NUM_NODES=("2")
 # SEEDS=("10" "20" "30" "40" "50
 # SEEDS=("10" "20" "30")
-SEEDS=("20")
-# SEEDS=("30")
+# SEEDS=("20")
+SEEDS=("30")
 
 
 # GPUs on this machine (e.g., 4 GPUs)
