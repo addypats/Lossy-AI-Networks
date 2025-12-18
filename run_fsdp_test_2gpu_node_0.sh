@@ -18,7 +18,7 @@ LOSS_RATES=()
 #NUM_NODES=("2")
 # SEEDS=("10" "20" "30" "40" "50")
 # SEEDS=("10" "20" "30")
-SEEDS=("20" "30")
+SEEDS=("30")
 
 
 # GPUs on this machine (e.g., 4 GPUs)
@@ -177,7 +177,7 @@ for config in "${CONFIGS_DET[@]}"; do
         --master_addr=$MASTER_ADDR \
         --master_port=$MASTER_PORT \
         --nproc_per_node="${gpus}" \
-        src/main_fsdp.py g
+        src/main_fsdp.py \
         --model_name "$MODEL" \
         --dataset "$DATASET" \
         --batch_size "${PER_DEVICE_BS}" \
