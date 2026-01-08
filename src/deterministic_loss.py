@@ -310,30 +310,91 @@ class DeterministicBurstLossyNetwork:
         }
 
 
+    # def _write_episode_files(self, ep: dict):
+    #     base = f"{self.filename_prefix}{ep['state']}_{ep['episode_index']}"
+    #     json_path = os.path.join(self.log_dir, base + ".json")
+    #     txt_path  = os.path.join(self.log_dir, base + ".txt")
+    #     with open(json_path, "w") as f:
+    #         json.dump(ep, f, indent=2)
+    #     start_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ep['start_time_wall']))
+    #     end_str   = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ep['end_time_wall'])) if ep['end_time_wall'] else '-'
+    #     lines = [
+    #         f"Episode: {ep['state'].upper()} #{ep['state_ordinal']}  (index {ep['episode_index']})",
+    #         f"Start:   {start_str}",
+    #         f"End:     {end_str}",
+    #         f"Duration (wall): {ep['wall_time_sec']:.6f} s",
+    #         f"Steps:           {ep['steps']}",
+    #         f"Packets sent:    {ep['packets']}",
+    #         f"Packets dropped: {ep['dropped']}",
+    #         f"Running totals → steps={ep['running_total_steps']}, "
+    #         f"packets={ep['running_total_packets']}, dropped={ep['running_total_dropped']}, "
+    #         f"wall_time={ep['running_total_time_sec']:.6f} s",
+    #         f"Params: lrb={ep['lrb']}, lrg={ep['lrg']}",
+    #         ""
+    #     ]
+    #     with open(txt_path, "w") as f:
+    #         f.write("\n".join(lines))
+    
     def _write_episode_files(self, ep: dict):
-        base = f"{self.filename_prefix}{ep['state']}_{ep['episode_index']}"
+        # --- be defensive: FSDP can trigger close/write in odd moments ---
+        state = ep.get("state", "?")
+        episode_index = ep.get("episode_index", "?")
+        base = f"{self.filename_prefix}{state}_{episode_index}"
+
         json_path = os.path.join(self.log_dir, base + ".json")
         txt_path  = os.path.join(self.log_dir, base + ".txt")
+
+        # JSON (write whatever we have)
         with open(json_path, "w") as f:
             json.dump(ep, f, indent=2)
-        start_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ep['start_time_wall']))
-        end_str   = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ep['end_time_wall'])) if ep['end_time_wall'] else '-'
+
+        # Human-readable TXT (use defaults if missing)
+        start_wall = ep.get("start_time_wall", None)
+        end_wall   = ep.get("end_time_wall", None)
+
+        start_str = (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_wall))
+            if start_wall is not None
+            else "-"
+        )
+        end_str = (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_wall))
+            if end_wall
+            else "-"
+        )
+
+        wall_time_sec = float(ep.get("wall_time_sec", 0.0) or 0.0)
+        steps   = int(ep.get("steps", 0) or 0)
+        packets = int(ep.get("packets", 0) or 0)
+        dropped = int(ep.get("dropped", 0) or 0)
+
+        running_total_steps   = ep.get("running_total_steps", 0)
+        running_total_packets = ep.get("running_total_packets", 0)
+        running_total_dropped = ep.get("running_total_dropped", 0)
+        running_total_time    = float(ep.get("running_total_time_sec", 0.0) or 0.0)
+
+        state_ordinal = ep.get("state_ordinal", "?")
+        lrb = ep.get("lrb", None)
+        lrg = ep.get("lrg", None)
+
         lines = [
-            f"Episode: {ep['state'].upper()} #{ep['state_ordinal']}  (index {ep['episode_index']})",
+            f"Episode: {str(state).upper()} #{state_ordinal}  (index {episode_index})",
             f"Start:   {start_str}",
             f"End:     {end_str}",
-            f"Duration (wall): {ep['wall_time_sec']:.6f} s",
-            f"Steps:           {ep['steps']}",
-            f"Packets sent:    {ep['packets']}",
-            f"Packets dropped: {ep['dropped']}",
-            f"Running totals → steps={ep['running_total_steps']}, "
-            f"packets={ep['running_total_packets']}, dropped={ep['running_total_dropped']}, "
-            f"wall_time={ep['running_total_time_sec']:.6f} s",
-            f"Params: lrb={ep['lrb']}, lrg={ep['lrg']}",
+            f"Duration (wall): {wall_time_sec:.6f} s",
+            f"Steps:           {steps}",
+            f"Packets sent:    {packets}",
+            f"Packets dropped: {dropped}",
+            f"Running totals → steps={running_total_steps}, "
+            f"packets={running_total_packets}, dropped={running_total_dropped}, "
+            f"wall_time={running_total_time:.6f} s",
+            f"Params: lrb={lrb}, lrg={lrg}",
             ""
         ]
+
         with open(txt_path, "w") as f:
             f.write("\n".join(lines))
+
 
     def _open_episode(self, state: int):
         now_wall = time.time()
@@ -372,7 +433,12 @@ class DeterministicBurstLossyNetwork:
         self._episode["running_total_packets"]          = self.total_packets
         self._episode["running_total_dropped"]          = self.total_dropped
         self._episode["running_total_time_sec"]         = self.total_time_sec
-
+        
+        # normalize missing counters (can happen if episode was opened in a minimal dict path)
+        self._episode.setdefault("steps", 0)
+        self._episode.setdefault("packets", 0)
+        self._episode.setdefault("dropped", 0)
+        self._episode.setdefault("wall_time_sec", 0.0)
 
         ep_copy = dict(self._episode)
         self.episodes.append(ep_copy)
