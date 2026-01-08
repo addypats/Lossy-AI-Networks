@@ -38,6 +38,11 @@ _NEXT_LAYER_ID = 0
 _AG_OCC_COUNT = defaultdict(int)   # (global_elems, dtype) -> count
 _RS_OCC_COUNT = defaultdict(int)   # (global_elems, dtype) -> count
 
+_HIT_ONCE = {"all_gather_into_tensor": False,
+             "reduce_scatter_tensor": False,
+             "all_reduce": False}
+
+
 
 def _is_payload_tensor(t: torch.Tensor) -> bool:
     """Only touch non-empty floating tensors."""
@@ -628,6 +633,14 @@ def install_lossy_collectives(
             t0 = time.time()
             rank, world_size = _get_rank_world()
             gpn, node_id, input_rank = _logical_topology(rank, world_size, num_nodes)
+            
+            # One-time "wrapper hit" print (rank 0 only)
+            if rank == 0 and not _HIT_ONCE.get(fn_name, False):
+                _HIT_ONCE[fn_name] = True
+                print(f"[HIT] wrapper={fn_name} first_seen call_counter={os.environ.get('LOSSY_CALL_COUNTER')} "
+                    f"enable_ag={enable_allgather} enable_rs={enable_rs} enable_ar={enable_allreduce}",
+                    flush=True)
+
 
             # One-time topology print per rank (helps validate 8x1 / 4x2 / 2x4 emulation)
             if not hasattr(wrapped, "_printed_topo"):
