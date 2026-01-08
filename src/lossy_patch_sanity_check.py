@@ -429,10 +429,38 @@ def install_lossy_collectives(
                 except Exception:
                     rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
                     world_size = int(os.environ.get("WORLD_SIZE", "1"))
+                
+                ###############################################################################    
+                # Bump per-process lossy call counter (useful for debugging)
+                try:
+                    c = int(os.environ.get("LOSSY_CALL_COUNTER", "0"))
+                except Exception:
+                    c = 0
+                os.environ["LOSSY_CALL_COUNTER"] = str(c + 1)
+                
+                ###############################################################################
+
 
                 gpus_per_node = max(1, world_size // max(1, num_nodes))
                 node_id = rank // gpus_per_node
                 input_rank = node_id * gpus_per_node
+                
+                ###############################################################################
+                # One-time topology print per rank
+                if not hasattr(wrapped, "_printed_topology"):
+                    import socket
+                    host = socket.gethostname()
+                    print(
+                        f"[TOPO] host={host} rank={rank}/{world_size} "
+                        f"num_nodes={num_nodes} gpus_per_node={gpus_per_node} "
+                        f"node_id={node_id} input_rank={input_rank} "
+                        f"inject={(rank==input_rank)}",
+                        flush=True
+                    )
+                    wrapped._printed_topology = True
+                    
+                ###############################################################################
+                
                 # ------------------------------------------------------------
 
                 # ---- SAFE LOSS INJECTION: never kill the rank on error ----

@@ -259,6 +259,25 @@ class DeterministicBurstLossyNetwork:
         return self
 
     # ---- Episode logging helpers (same style as your GE logger) ----
+    # def _episode_template(self, state: int, start_wall_ts: float):
+    #     return {
+    #         "state": "bad" if state == BAD else "good",
+    #         "episode_index": self.episode_index,
+    #         "state_ordinal": None,
+    #         "start_time_wall": start_wall_ts,
+    #         "end_time_wall": None,
+    #         "wall_time_sec": 0.0,
+    #         "steps": 0,
+    #         "packets": 0,
+    #         "dropped": 0,
+    #         "running_total_steps": None,
+    #         "running_total_packets": None,
+    #         "running_total_dropped": None,
+    #         "running_total_time_sec": None,
+    #         "lrb": self.lrb,
+    #         "lrg": self.lrg,
+    #     }
+    
     def _episode_template(self, state: int, start_wall_ts: float):
         return {
             "state": "bad" if state == BAD else "good",
@@ -267,16 +286,29 @@ class DeterministicBurstLossyNetwork:
             "start_time_wall": start_wall_ts,
             "end_time_wall": None,
             "wall_time_sec": 0.0,
-            "steps": 0,
+
+            # IMPORTANT: keep this as "lossy_calls" (not optimizer steps)
+            "lossy_calls": 0,
+
+            # New: optimizer-step-based accounting
+            "optimizer_steps": 0,
+            "global_step_start": None,
+            "global_step_end": None,
+
             "packets": 0,
             "dropped": 0,
-            "running_total_steps": None,
+
+            # Running totals (split by meaning)
+            "running_total_lossy_calls": None,
+            "running_total_optimizer_steps": None,
             "running_total_packets": None,
             "running_total_dropped": None,
             "running_total_time_sec": None,
+
             "lrb": self.lrb,
             "lrg": self.lrg,
         }
+
 
     def _write_episode_files(self, ep: dict):
         base = f"{self.filename_prefix}{ep['state']}_{ep['episode_index']}"
@@ -323,10 +355,24 @@ class DeterministicBurstLossyNetwork:
         self._last_wall_ts = now_wall
 
         self._episode["end_time_wall"]         = now_wall
-        self._episode["running_total_steps"]   = self.total_steps
-        self._episode["running_total_packets"] = self.total_packets
-        self._episode["running_total_dropped"] = self.total_dropped
-        self._episode["running_total_time_sec"]= self.total_time_sec
+        # self._episode["running_total_steps"]   = self.total_steps
+        # self._episode["running_total_packets"] = self.total_packets
+        # self._episode["running_total_dropped"] = self.total_dropped
+        # self._episode["running_total_time_sec"]= self.total_time_sec
+        
+        # Ensure global_step_end is set
+        if self._episode.get("global_step_end", None) is None:
+            try:
+                self._episode["global_step_end"] = int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
+            except Exception:
+                self._episode["global_step_end"] = self._episode.get("global_step_start", 0)
+
+        self._episode["running_total_lossy_calls"]      = getattr(self, "total_lossy_calls", None)
+        self._episode["running_total_optimizer_steps"]  = getattr(self, "total_optimizer_steps", None)
+        self._episode["running_total_packets"]          = self.total_packets
+        self._episode["running_total_dropped"]          = self.total_dropped
+        self._episode["running_total_time_sec"]         = self.total_time_sec
+
 
         ep_copy = dict(self._episode)
         self.episodes.append(ep_copy)
@@ -353,11 +399,97 @@ class DeterministicBurstLossyNetwork:
         mask[drop_idx] = False
         return mask
 
-    def send(self, data: torch.Tensor) -> torch.Tensor:
-        if self.step_idx >= self.T_steps:
-            num_packets = get_num_packets(data)
-            return torch.ones(num_packets, dtype=torch.bool)
+    # def send(self, data: torch.Tensor) -> torch.Tensor:
+    #     if self.step_idx >= self.T_steps:
+    #         num_packets = get_num_packets(data)
+    #         return torch.ones(num_packets, dtype=torch.bool)
 
+    #     now_mono = perf_counter()
+    #     dt = max(0.0, now_mono - getattr(self, "_last_mono_ts", now_mono))
+    #     self._episode["wall_time_sec"] += dt
+    #     self.total_time_sec += dt
+    #     self._last_mono_ts = now_mono
+    #     self._last_wall_ts = time.time()
+
+    #     curr_state = self.state[self.step_idx]
+    #     num_packets = get_num_packets(data)
+
+    #     if curr_state == GOOD:
+    #         k_drop = 0
+    #     else:
+    #         # Accumulate target drops and emit integer part now — guarantees exact overall loss by end
+    #         self.target_drops_accum += self.lrb * num_packets
+    #         k_drop = int(math.floor(self.target_drops_accum - self.dropped_so_far))
+    #         k_drop = max(0, min(k_drop, num_packets))
+
+    #     mask = self._packet_mask_from_k(num_packets, k_drop)
+
+    #     dropped = int((~mask).sum().item())
+    #     self._episode["steps"]   += 1
+    #     self._episode["packets"] += num_packets
+    #     self._episode["dropped"] += dropped
+
+    #     self.total_steps   += 1
+    #     self.total_packets += num_packets
+    #     self.total_dropped += dropped
+    #     self.dropped_so_far+= dropped
+
+    #     self.step_idx += 1
+    #     next_state = self.state[self.step_idx] if self.step_idx < self.T_steps else curr_state
+    #     self._roll_episode_if_needed(next_state)
+    #     return mask
+    
+    def send(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        STEP-BASED deterministic schedule for FSDP:
+        - Use HF global_step (LOSSY_GLOBAL_STEP) to choose GOOD/BAD state.
+        - Do NOT advance the schedule per collective call.
+        - Keep per-episode counts:
+            * lossy_calls = how many collectives invoked send()
+            * optimizer_steps = how many distinct global_steps occurred in this episode
+        """
+
+        # ---- Lazy-init extra counters (keeps patch minimal) ----
+        if not hasattr(self, "total_lossy_calls"):
+            self.total_lossy_calls = 0
+        if not hasattr(self, "total_optimizer_steps"):
+            self.total_optimizer_steps = 0
+        if not hasattr(self, "_last_seen_global_step"):
+            self._last_seen_global_step = None
+
+        # ---- Read optimizer step from HF Trainer ----
+        try:
+            gs = int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
+        except Exception:
+            gs = 0
+
+        # Clamp schedule index to [0, T_steps-1]
+        if self.T_steps <= 0:
+            idx = 0
+        else:
+            idx = min(max(gs, 0), self.T_steps - 1)
+
+        curr_state = self.state[idx] if self.T_steps > 0 else GOOD
+
+        # ---- Roll episode if the GOOD/BAD state changed (based on optimizer step) ----
+        curr_ep_state = BAD if (self._episode["state"] == "bad") else GOOD
+        if curr_state != curr_ep_state:
+            self._close_episode()
+            self._open_episode(curr_state)
+
+        # ---- Track optimizer-step transitions (global_step changes) ----
+        if self._last_seen_global_step is None:
+            self._last_seen_global_step = gs
+            self._episode["global_step_start"] = gs
+
+        if gs != self._last_seen_global_step:
+            # new optimizer step
+            self.total_optimizer_steps += 1
+            self._episode["optimizer_steps"] += 1
+            self._episode["global_step_end"] = gs
+            self._last_seen_global_step = gs
+
+        # ---- Update wall-clock accounting ----
         now_mono = perf_counter()
         dt = max(0.0, now_mono - getattr(self, "_last_mono_ts", now_mono))
         self._episode["wall_time_sec"] += dt
@@ -365,33 +497,36 @@ class DeterministicBurstLossyNetwork:
         self._last_mono_ts = now_mono
         self._last_wall_ts = time.time()
 
-        curr_state = self.state[self.step_idx]
+        # ---- Packetization + masking ----
         num_packets = get_num_packets(data)
 
-        if curr_state == GOOD:
+        # If beyond schedule horizon, treat as GOOD (no drops)
+        if gs >= self.T_steps:
+            k_drop = 0
+        elif curr_state == GOOD:
             k_drop = 0
         else:
-            # Accumulate target drops and emit integer part now — guarantees exact overall loss by end
+            # Accumulate target drops (BAD intensity only)
             self.target_drops_accum += self.lrb * num_packets
             k_drop = int(math.floor(self.target_drops_accum - self.dropped_so_far))
             k_drop = max(0, min(k_drop, num_packets))
 
+        # Track "lossy call count" (collective-call count)
+        self.total_lossy_calls += 1
+        self._episode["lossy_calls"] += 1
+
         mask = self._packet_mask_from_k(num_packets, k_drop)
 
         dropped = int((~mask).sum().item())
-        self._episode["steps"]   += 1
         self._episode["packets"] += num_packets
         self._episode["dropped"] += dropped
 
-        self.total_steps   += 1
         self.total_packets += num_packets
         self.total_dropped += dropped
-        self.dropped_so_far+= dropped
+        self.dropped_so_far += dropped
 
-        self.step_idx += 1
-        next_state = self.state[self.step_idx] if self.step_idx < self.T_steps else curr_state
-        self._roll_episode_if_needed(next_state)
         return mask
+
 
     # def receive(self, data: torch.Tensor, packets_mask: torch.Tensor) -> torch.Tensor:
     #     if packets_mask.all():
@@ -436,13 +571,23 @@ class DeterministicBurstLossyNetwork:
         self._close_episode()
         # Summary CSV per run
         csv_path = os.path.join(self.log_dir, f"{self.run_id}_episodes_summary.csv")
+        # fieldnames = [
+        #     "episode_index","state","state_ordinal",
+        #     "start_time_wall","end_time_wall","wall_time_sec",
+        #     "steps","packets","dropped",
+        #     "running_total_steps","running_total_packets","running_total_dropped","running_total_time_sec",
+        #     "lrb","lrg"
+        # ]
         fieldnames = [
             "episode_index","state","state_ordinal",
             "start_time_wall","end_time_wall","wall_time_sec",
-            "steps","packets","dropped",
-            "running_total_steps","running_total_packets","running_total_dropped","running_total_time_sec",
+            "lossy_calls","optimizer_steps","global_step_start","global_step_end",
+            "packets","dropped",
+            "running_total_lossy_calls","running_total_optimizer_steps",
+            "running_total_packets","running_total_dropped","running_total_time_sec",
             "lrb","lrg"
         ]
+
         with open(csv_path, "w", newline="") as f:
             import csv as _csv
             w = _csv.DictWriter(f, fieldnames=fieldnames)
