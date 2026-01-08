@@ -339,6 +339,210 @@ def _apply_packet_loss_(
 
 # for rank aware strategy with input gpu getting loss for dist training on multiple instances
 
+# def install_lossy_collectives(
+#     loss: LossyNetwork,
+#     enable_allgather: bool = True,
+#     enable_rs: bool = True,
+#     enable_allreduce: bool = True,
+#     min_numel: int = 0,
+#     num_nodes: int = 1,
+# ):
+#     """
+#     Monkey-patch torch.distributed collectives to inject loss AND
+#     log per-layer-instance packet counts.
+
+#     2A-style rank-aware behavior:
+#     - Divide world_size into `num_nodes` blocks.
+#     - For each node, designate the *first* rank in that block as the
+#       logical "input rank".
+#     - Only that input rank applies loss before the collective.
+#     """    
+
+#     def _wrap(fn_name):
+#         original = getattr(dist, fn_name)
+
+#         # def wrapped(*args, **kwargs):
+#         #     t0 = time.time()
+#         #     try:
+#         #         if fn_name == "all_gather_into_tensor" and enable_allgather:
+#         #             # all_gather_into_tensor(output, input, group=...)
+#         #             if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+#         #                 t = args[1]
+#         #                 if _is_payload_tensor(t) and t.numel() >= min_numel:
+#         #                     stats = _apply_packet_loss_(
+#         #                         t,
+#         #                         loss,
+#         #                         tag="all_gather_into_tensor.input",
+#         #                     )
+#         #                     _record_packets_instance(fn_name, t, stats)
+
+#         #         elif fn_name == "reduce_scatter_tensor" and enable_rs:
+#         #             # reduce_scatter_tensor(output, input, group=...)
+#         #             if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+#         #                 t = args[1]
+#         #                 if _is_payload_tensor(t) and t.numel() >= min_numel:
+#         #                     stats = _apply_packet_loss_(
+#         #                         t,
+#         #                         loss,
+#         #                         tag="reduce_scatter_tensor.input",
+#         #                     )
+#         #                     _record_packets_instance(fn_name, t, stats)
+
+#         #         elif fn_name == "all_reduce" and enable_allreduce:
+#         #             # all_reduce(tensor, group=...)
+#         #             if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+#         #                 t = args[0]
+#         #                 if _is_payload_tensor(t) and t.numel() >= min_numel:
+#         #                     _ = _apply_packet_loss_(
+#         #                         t,
+#         #                         loss,
+#         #                         tag="all_reduce.tensor",
+#         #                     )
+
+#         #         return original(*args, **kwargs)
+#         #     finally:
+#         #         dt = (time.time() - t0) * 1000.0
+#         #         try:
+#         #             r = int(
+#         #                 os.environ.get(
+#         #                     "RANK", os.environ.get("LOCAL_RANK", "0")
+#         #                 )
+#         #             )
+#         #         except Exception:
+#         #             r = 0
+#         #         if r == 0:
+#         #             print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
+        
+#         # for rank aware strategy with input gpu getting loss for dist training on multiple instances
+
+#         def wrapped(*args, **kwargs):
+#             t0 = time.time()
+#             try:
+#                 # ---- 2A: determine node_id and input rank for this rank ----
+#                 try:
+#                     if dist.is_available() and dist.is_initialized():
+#                         rank = dist.get_rank()
+#                         world_size = dist.get_world_size()
+#                     else:
+#                         rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+#                         world_size = int(os.environ.get("WORLD_SIZE", "1"))
+#                 except Exception:
+#                     rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+#                     world_size = int(os.environ.get("WORLD_SIZE", "1"))
+                
+#                 ###############################################################################    
+#                 # Bump per-process lossy call counter (useful for debugging)
+#                 try:
+#                     c = int(os.environ.get("LOSSY_CALL_COUNTER", "0"))
+#                 except Exception:
+#                     c = 0
+#                 os.environ["LOSSY_CALL_COUNTER"] = str(c + 1)
+                
+#                 ###############################################################################
+
+
+#                 gpus_per_node = max(1, world_size // max(1, num_nodes))
+#                 node_id = rank // gpus_per_node
+#                 input_rank = node_id * gpus_per_node
+                
+#                 ###############################################################################
+#                 # One-time topology print per rank
+#                 if not hasattr(wrapped, "_printed_topology"):
+#                     import socket
+#                     host = socket.gethostname()
+#                     print(
+#                         f"[TOPO] host={host} rank={rank}/{world_size} "
+#                         f"num_nodes={num_nodes} gpus_per_node={gpus_per_node} "
+#                         f"node_id={node_id} input_rank={input_rank} "
+#                         f"inject={(rank==input_rank)}",
+#                         flush=True
+#                     )
+#                     wrapped._printed_topology = True
+                    
+#                 ###############################################################################
+                
+#                 # ------------------------------------------------------------
+
+#                 # ---- SAFE LOSS INJECTION: never kill the rank on error ----
+#                 try:
+#                     if fn_name == "all_gather_into_tensor" and enable_allgather:
+#                         # all_gather_into_tensor(output, input, group=...)
+#                         if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+#                             t = args[1]
+#                             if (
+#                                 _is_payload_tensor(t)
+#                                 and t.numel() >= min_numel
+#                                 and rank == input_rank   # 2A: boundary rank per node
+#                             ):
+#                                 stats = _apply_packet_loss_(
+#                                     t,
+#                                     loss,
+#                                     tag="all_gather_into_tensor.input",
+#                                 )
+#                                 _record_packets_instance(fn_name, t, stats)
+
+#                     elif fn_name == "reduce_scatter_tensor" and enable_rs:
+#                         # reduce_scatter_tensor(output, input, group=...)
+#                         if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+#                             t = args[1]
+#                             if (
+#                                 _is_payload_tensor(t)
+#                                 and t.numel() >= min_numel
+#                                 and rank == input_rank   # 2A
+#                             ):
+#                                 stats = _apply_packet_loss_(
+#                                     t,
+#                                     loss,
+#                                     tag="reduce_scatter_tensor.input",
+#                                 )
+#                                 _record_packets_instance(fn_name, t, stats)
+
+#                     elif fn_name == "all_reduce" and enable_allreduce:
+#                         # all_reduce(tensor, group=...)
+#                         if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+#                             t = args[0]
+#                             if (
+#                                 _is_payload_tensor(t)
+#                                 and t.numel() >= min_numel
+#                                 and rank == input_rank   # 2A
+#                             ):
+#                                 _ = _apply_packet_loss_(
+#                                     t,
+#                                     loss,
+#                                     tag="all_reduce.tensor",
+#                                 )
+
+#                 except Exception as e:
+#                     # IMPORTANT: log and fall back to *no-loss* for this call
+#                     # instead of crashing this rank
+#                     import traceback
+#                     print(
+#                         f"[LOSSY][ERROR] rank={rank} fn={fn_name}: "
+#                         f"{type(e).__name__}: {e}",
+#                         flush=True,
+#                     )
+#                     traceback.print_exc()
+
+#                 # Always call the real collective on all ranks
+#                 return original(*args, **kwargs)
+
+#             finally:
+#                 dt = (time.time() - t0) * 1000.0
+#                 try:
+#                     r = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+#                 except Exception:
+#                     r = 0
+#                 # if r == 0:
+#                     # print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
+
+#         return wrapped
+        
+
+#     for name in ("all_gather_into_tensor", "reduce_scatter_tensor", "all_reduce"):
+#         if hasattr(dist, name):
+#             setattr(dist, name, _wrap(name))
+
+
 def install_lossy_collectives(
     loss: LossyNetwork,
     enable_allgather: bool = True,
@@ -348,196 +552,139 @@ def install_lossy_collectives(
     num_nodes: int = 1,
 ):
     """
-    Monkey-patch torch.distributed collectives to inject loss AND
-    log per-layer-instance packet counts.
+    Monkey-patch torch.distributed collectives to inject loss + (optional) log stats.
 
-    2A-style rank-aware behavior:
-    - Divide world_size into `num_nodes` blocks.
-    - For each node, designate the *first* rank in that block as the
-      logical "input rank".
-    - Only that input rank applies loss before the collective.
-    """    
+    Rank-aware behavior (logical nodes):
+      - Partition world_size into `num_nodes` blocks of size gpus_per_node.
+      - Designate the *first* rank in each block as the "boundary" (input_rank).
+      - Only boundary ranks inject loss (emulates loss only on inter-node edges).
 
-    def _wrap(fn_name):
+    IMPORTANT:
+      - If num_nodes <= 1, we disable injection (no "inter-node" network).
+      - LOSSY_GLOBAL_STEP is provided by your HF callback.
+      - We also increment LOSSY_CALL_COUNTER per collective call for stable per-call seeding/debug.
+    """
+
+    import socket
+
+    def _get_rank_world():
+        if dist.is_available() and dist.is_initialized():
+            return dist.get_rank(), dist.get_world_size()
+        # fallback for early debug
+        r = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+        w = int(os.environ.get("WORLD_SIZE", "1"))
+        return r, w
+
+    def _logical_topology(rank: int, world_size: int, num_nodes: int):
+        # If user says 1 node, treat as single node (no boundary injection)
+        if num_nodes is None or num_nodes <= 1:
+            gpn = world_size
+            node_id = 0
+            input_rank = 0
+            return gpn, node_id, input_rank
+
+        # Assume num_nodes divides world_size in your experiments (8 and {1,2,4,8})
+        # If it doesn't, last "node" may be smaller; we still compute a sane mapping.
+        gpn = max(1, world_size // num_nodes)
+        if gpn * num_nodes != world_size:
+            # uneven partition: fall back to ceil partitioning
+            gpn = (world_size + num_nodes - 1) // num_nodes
+
+        node_id = rank // gpn
+        if node_id >= num_nodes:
+            node_id = num_nodes - 1
+
+        input_rank = node_id * gpn
+        if input_rank >= world_size:
+            input_rank = max(0, world_size - 1)
+        return gpn, node_id, input_rank
+
+    def _bump_call_counter():
+        try:
+            c = int(os.environ.get("LOSSY_CALL_COUNTER", "0"))
+        except Exception:
+            c = 0
+        os.environ["LOSSY_CALL_COUNTER"] = str(c + 1)
+        return c + 1
+
+    def _should_touch_tensor(t: torch.Tensor) -> bool:
+        return _is_payload_tensor(t) and (t.numel() >= int(min_numel))
+
+    def _wrap(fn_name: str):
         original = getattr(dist, fn_name)
-
-        # def wrapped(*args, **kwargs):
-        #     t0 = time.time()
-        #     try:
-        #         if fn_name == "all_gather_into_tensor" and enable_allgather:
-        #             # all_gather_into_tensor(output, input, group=...)
-        #             if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-        #                 t = args[1]
-        #                 if _is_payload_tensor(t) and t.numel() >= min_numel:
-        #                     stats = _apply_packet_loss_(
-        #                         t,
-        #                         loss,
-        #                         tag="all_gather_into_tensor.input",
-        #                     )
-        #                     _record_packets_instance(fn_name, t, stats)
-
-        #         elif fn_name == "reduce_scatter_tensor" and enable_rs:
-        #             # reduce_scatter_tensor(output, input, group=...)
-        #             if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-        #                 t = args[1]
-        #                 if _is_payload_tensor(t) and t.numel() >= min_numel:
-        #                     stats = _apply_packet_loss_(
-        #                         t,
-        #                         loss,
-        #                         tag="reduce_scatter_tensor.input",
-        #                     )
-        #                     _record_packets_instance(fn_name, t, stats)
-
-        #         elif fn_name == "all_reduce" and enable_allreduce:
-        #             # all_reduce(tensor, group=...)
-        #             if len(args) >= 1 and isinstance(args[0], torch.Tensor):
-        #                 t = args[0]
-        #                 if _is_payload_tensor(t) and t.numel() >= min_numel:
-        #                     _ = _apply_packet_loss_(
-        #                         t,
-        #                         loss,
-        #                         tag="all_reduce.tensor",
-        #                     )
-
-        #         return original(*args, **kwargs)
-        #     finally:
-        #         dt = (time.time() - t0) * 1000.0
-        #         try:
-        #             r = int(
-        #                 os.environ.get(
-        #                     "RANK", os.environ.get("LOCAL_RANK", "0")
-        #                 )
-        #             )
-        #         except Exception:
-        #             r = 0
-        #         if r == 0:
-        #             print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
-        
-        # for rank aware strategy with input gpu getting loss for dist training on multiple instances
 
         def wrapped(*args, **kwargs):
             t0 = time.time()
-            try:
-                # ---- 2A: determine node_id and input rank for this rank ----
-                try:
-                    if dist.is_available() and dist.is_initialized():
-                        rank = dist.get_rank()
-                        world_size = dist.get_world_size()
-                    else:
-                        rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
-                        world_size = int(os.environ.get("WORLD_SIZE", "1"))
-                except Exception:
-                    rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
-                    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-                
-                ###############################################################################    
-                # Bump per-process lossy call counter (useful for debugging)
-                try:
-                    c = int(os.environ.get("LOSSY_CALL_COUNTER", "0"))
-                except Exception:
-                    c = 0
-                os.environ["LOSSY_CALL_COUNTER"] = str(c + 1)
-                
-                ###############################################################################
+            rank, world_size = _get_rank_world()
+            gpn, node_id, input_rank = _logical_topology(rank, world_size, num_nodes)
 
+            # One-time topology print per rank (helps validate 8x1 / 4x2 / 2x4 emulation)
+            if not hasattr(wrapped, "_printed_topo"):
+                host = socket.gethostname()
+                print(
+                    f"[TOPO] host={host} rank={rank}/{world_size} "
+                    f"num_nodes={num_nodes} gpus_per_node={gpn} node_id={node_id} "
+                    f"input_rank={input_rank} inject={(rank == input_rank)}",
+                    flush=True
+                )
+                wrapped._printed_topo = True
 
-                gpus_per_node = max(1, world_size // max(1, num_nodes))
-                node_id = rank // gpus_per_node
-                input_rank = node_id * gpus_per_node
-                
-                ###############################################################################
-                # One-time topology print per rank
-                if not hasattr(wrapped, "_printed_topology"):
-                    import socket
-                    host = socket.gethostname()
-                    print(
-                        f"[TOPO] host={host} rank={rank}/{world_size} "
-                        f"num_nodes={num_nodes} gpus_per_node={gpus_per_node} "
-                        f"node_id={node_id} input_rank={input_rank} "
-                        f"inject={(rank==input_rank)}",
-                        flush=True
-                    )
-                    wrapped._printed_topology = True
-                    
-                ###############################################################################
-                
-                # ------------------------------------------------------------
+            # Always bump call counter (even if we don't inject) for debugging correlation
+            _bump_call_counter()
 
-                # ---- SAFE LOSS INJECTION: never kill the rank on error ----
-                try:
-                    if fn_name == "all_gather_into_tensor" and enable_allgather:
-                        # all_gather_into_tensor(output, input, group=...)
-                        if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-                            t = args[1]
-                            if (
-                                _is_payload_tensor(t)
-                                and t.numel() >= min_numel
-                                and rank == input_rank   # 2A: boundary rank per node
-                            ):
-                                stats = _apply_packet_loss_(
-                                    t,
-                                    loss,
-                                    tag="all_gather_into_tensor.input",
-                                )
-                                _record_packets_instance(fn_name, t, stats)
-
-                    elif fn_name == "reduce_scatter_tensor" and enable_rs:
-                        # reduce_scatter_tensor(output, input, group=...)
-                        if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-                            t = args[1]
-                            if (
-                                _is_payload_tensor(t)
-                                and t.numel() >= min_numel
-                                and rank == input_rank   # 2A
-                            ):
-                                stats = _apply_packet_loss_(
-                                    t,
-                                    loss,
-                                    tag="reduce_scatter_tensor.input",
-                                )
-                                _record_packets_instance(fn_name, t, stats)
-
-                    elif fn_name == "all_reduce" and enable_allreduce:
-                        # all_reduce(tensor, group=...)
-                        if len(args) >= 1 and isinstance(args[0], torch.Tensor):
-                            t = args[0]
-                            if (
-                                _is_payload_tensor(t)
-                                and t.numel() >= min_numel
-                                and rank == input_rank   # 2A
-                            ):
-                                _ = _apply_packet_loss_(
-                                    t,
-                                    loss,
-                                    tag="all_reduce.tensor",
-                                )
-
-                except Exception as e:
-                    # IMPORTANT: log and fall back to *no-loss* for this call
-                    # instead of crashing this rank
-                    import traceback
-                    print(
-                        f"[LOSSY][ERROR] rank={rank} fn={fn_name}: "
-                        f"{type(e).__name__}: {e}",
-                        flush=True,
-                    )
-                    traceback.print_exc()
-
-                # Always call the real collective on all ranks
+            # If user wants "no inter-node loss", skip injection
+            if num_nodes is None or num_nodes <= 1:
                 return original(*args, **kwargs)
 
-            finally:
-                dt = (time.time() - t0) * 1000.0
-                try:
-                    r = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
-                except Exception:
-                    r = 0
-                # if r == 0:
-                    # print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms")
+            # Only boundary ranks inject (your intended model)
+            inject_here = (rank == input_rank)
+
+            try:
+                if fn_name == "all_gather_into_tensor" and enable_allgather and inject_here:
+                    # all_gather_into_tensor(output, input, group=...)
+                    if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                        t = args[1]
+                        if _should_touch_tensor(t):
+                            stats = _apply_packet_loss_(t, loss, tag="ag.input")
+                            _record_packets_instance(fn_name, t, stats)
+
+                elif fn_name == "reduce_scatter_tensor" and enable_rs and inject_here:
+                    # reduce_scatter_tensor(output, input, group=...)
+                    if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                        t = args[1]
+                        if _should_touch_tensor(t):
+                            stats = _apply_packet_loss_(t, loss, tag="rs.input")
+                            _record_packets_instance(fn_name, t, stats)
+
+                elif fn_name == "all_reduce" and enable_allreduce and inject_here:
+                    # all_reduce(tensor, group=...)
+                    if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+                        t = args[0]
+                        if _should_touch_tensor(t):
+                            _ = _apply_packet_loss_(t, loss, tag="ar.tensor")
+
+            except Exception as e:
+                # Never crash training due to the lossy wrapper.
+                import traceback
+                print(
+                    f"[LOSSY][ERROR] rank={rank} fn={fn_name}: {type(e).__name__}: {e}",
+                    flush=True
+                )
+                traceback.print_exc()
+
+            # Always call the real collective on all ranks
+            out = original(*args, **kwargs)
+
+            # Optional timing print (kept off by default)
+            # dt = (time.time() - t0) * 1000.0
+            # if rank == 0:
+            #     print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms", flush=True)
+
+            return out
 
         return wrapped
-        
 
+    # Patch the collectives you use
     for name in ("all_gather_into_tensor", "reduce_scatter_tensor", "all_reduce"):
         if hasattr(dist, name):
             setattr(dist, name, _wrap(name))
