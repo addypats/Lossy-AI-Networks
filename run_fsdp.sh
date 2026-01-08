@@ -8,7 +8,7 @@ MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=(0)
+LOSS_RATES=()
 
 # Testing
 # LOSS_RATES=("1")
@@ -43,10 +43,10 @@ CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export WANDB_PROJECT="lossy_net_fsdp_study"
 
-export NNODES=1
+# export NNODES=1
 # export NNODES=2
 # export NNODES=4
-# export NNODES=8
+export NNODES=8
 
 
 # Logging Directory

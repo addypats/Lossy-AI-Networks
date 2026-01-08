@@ -1,0 +1,11 @@
+Episode: GOOD #0  (index 0)
+Start:   2026-01-08 20:19:57
+End:     2026-01-08 20:25:09
+Duration (wall): 311.812826 s
+Lossy calls (collectives): 89
+Optimizer steps:          88
+Global step range:        0 → 88
+Packets sent:             126995880
+Packets dropped:          0
+Running totals → lossy_calls=89, opt_steps=88, packets=126995880, dropped=0, wall_time=311.8128256839991
+Params: lrb=0.045, lrg=0.0
