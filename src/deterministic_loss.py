@@ -311,29 +311,29 @@ class DeterministicBurstLossyNetwork:
 
 
     # def _write_episode_files(self, ep: dict):
-    #     base = f"{self.filename_prefix}{ep['state']}_{ep['episode_index']}"
-    #     json_path = os.path.join(self.log_dir, base + ".json")
-    #     txt_path  = os.path.join(self.log_dir, base + ".txt")
-    #     with open(json_path, "w") as f:
-    #         json.dump(ep, f, indent=2)
-    #     start_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ep['start_time_wall']))
-    #     end_str   = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ep['end_time_wall'])) if ep['end_time_wall'] else '-'
-    #     lines = [
-    #         f"Episode: {ep['state'].upper()} #{ep['state_ordinal']}  (index {ep['episode_index']})",
-    #         f"Start:   {start_str}",
-    #         f"End:     {end_str}",
-    #         f"Duration (wall): {ep['wall_time_sec']:.6f} s",
-    #         f"Steps:           {ep['steps']}",
-    #         f"Packets sent:    {ep['packets']}",
-    #         f"Packets dropped: {ep['dropped']}",
-    #         f"Running totals → steps={ep['running_total_steps']}, "
-    #         f"packets={ep['running_total_packets']}, dropped={ep['running_total_dropped']}, "
-    #         f"wall_time={ep['running_total_time_sec']:.6f} s",
-    #         f"Params: lrb={ep['lrb']}, lrg={ep['lrg']}",
-    #         ""
-    #     ]
-    #     with open(txt_path, "w") as f:
-    #         f.write("\n".join(lines))
+        base = f"{self.filename_prefix}{ep['state']}_{ep['episode_index']}"
+        json_path = os.path.join(self.log_dir, base + ".json")
+        txt_path  = os.path.join(self.log_dir, base + ".txt")
+        with open(json_path, "w") as f:
+            json.dump(ep, f, indent=2)
+        start_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ep['start_time_wall']))
+        end_str   = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ep['end_time_wall'])) if ep['end_time_wall'] else '-'
+        lines = [
+            f"Episode: {ep['state'].upper()} #{ep['state_ordinal']}  (index {ep['episode_index']})",
+            f"Start:   {start_str}",
+            f"End:     {end_str}",
+            f"Duration (wall): {ep['wall_time_sec']:.6f} s",
+            f"Steps:           {ep['steps']}",
+            f"Packets sent:    {ep['packets']}",
+            f"Packets dropped: {ep['dropped']}",
+            f"Running totals → steps={ep['running_total_steps']}, "
+            f"packets={ep['running_total_packets']}, dropped={ep['running_total_dropped']}, "
+            f"wall_time={ep['running_total_time_sec']:.6f} s",
+            f"Params: lrb={ep['lrb']}, lrg={ep['lrg']}",
+            ""
+        ]
+        with open(txt_path, "w") as f:
+            f.write("\n".join(lines))
     
     # def _write_episode_files(self, ep: dict):
         # --- be defensive: FSDP can trigger close/write in odd moments ---
@@ -588,6 +588,29 @@ class DeterministicBurstLossyNetwork:
     #     self._roll_episode_if_needed(next_state)
     #     return mask
     
+    def _sync_print(self, event: str, prev_state: int, new_state: int, gs: int):
+        import os
+        try:
+            import torch.distributed as dist
+            rank = dist.get_rank() if dist.is_initialized() else int(os.environ.get("RANK", "0"))
+        except Exception:
+            rank = int(os.environ.get("RANK", "0"))
+
+        # keep logs small: only a couple ranks
+        if rank not in (0, 1):
+            return
+
+        cc = os.environ.get("LOSSY_CALL_COUNTER", "NA")
+        ps = "bad" if prev_state == BAD else "good"
+        ns = "bad" if new_state == BAD else "good"
+
+        print(
+            f"[SYNC] rank={rank} event={event} ep={self.episode_index} {ps}->{ns} "
+            f"global_step={gs} call_counter={cc}",
+            flush=True
+        )
+
+    
     def send(self, data: torch.Tensor) -> torch.Tensor:
         """
         STEP-BASED deterministic schedule for FSDP:
@@ -621,10 +644,19 @@ class DeterministicBurstLossyNetwork:
         curr_state = self.state[idx] if self.T_steps > 0 else GOOD
 
         # ---- Roll episode if the GOOD/BAD state changed (based on optimizer step) ----
+        # curr_ep_state = BAD if (self._episode["state"] == "bad") else GOOD
+        # if curr_state != curr_ep_state:
+        #     self._close_episode()
+        #     self._open_episode(curr_state)
+        
         curr_ep_state = BAD if (self._episode["state"] == "bad") else GOOD
         if curr_state != curr_ep_state:
+            # DEBUG: verify rank sync on transitions
+            self._sync_print("transition", curr_ep_state, curr_state, gs)
+
             self._close_episode()
             self._open_episode(curr_state)
+
 
         # ---- Track optimizer-step transitions (global_step changes) ----
         if self._last_seen_global_step is None:
