@@ -167,6 +167,7 @@ for config in "${CONFIGS_DET[@]}"; do
         --output_dir "$output_dir" \
               --eval_steps 20 \
         --loss-enable-rs \
+        --loss-enable-ag \
         --loss_type "det" \
         --det_config "$config" \
         --num_nodes "${NNODES}" \
