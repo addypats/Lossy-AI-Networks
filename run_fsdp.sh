@@ -8,7 +8,7 @@ MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATE=()
+LOSS_RATE=(0)
 
 # Testing
 # LOSS_RATES=("1")
@@ -22,7 +22,7 @@ SEEDS=(10)
 
 # GPUs on this machine (e.g., 4 GPUs)
 # GPUS_LIST=(1 2 4)
-GPUS_LIST=(4 8)
+GPUS_LIST=(8)
 #SEEDS=(1 2 3)
 
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
@@ -31,16 +31,22 @@ LR=1e-5
 #EPOCHS=1
 #EVAL_STEPS=50
 
-CONFIGS=("one_precent" "half_percent" "short_1percent" "short_half_percent")
-CONFIGS=("short_1percent" "short_half_percent")
+# CONFIGS=("one_precent" "half_percent" "short_1percent" "short_half_percent")
+# CONFIGS=("short_1percent" "short_half_percent")
+CONFIGS=()
 
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
-CONFIGS_DET=()
+CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
 
 # GPU settings
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export WANDB_PROJECT="lossy_net_fsdp_study"
+
+export NNODES=1
+# export NNODES=2
+# export NNODES=4
+# export NNODES=8
 
 
 # Logging Directory
@@ -79,10 +85,11 @@ for loss_rate in "${LOSS_RATES[@]}"; do
         --eval_steps 20 \
         --epochs 20 \
         --loss_rate "$loss_rate" \
-	--loss-enable-all \
+	--loss-enable-rs \
         --seed "${seed}" \
         --output_dir "${output_dir}" \
-        --fp16
+        --fp16 \
+        --num_nodes "${NNODES}"
 
       echo "Completed experiment: $run_id"
       echo "--------------------------------"
@@ -117,11 +124,12 @@ for config in "${CONFIGS[@]}"; do
         --eval_steps 20 \
         --epochs 20 \
         --loss_type "g-e" \
-        --ge_config "$config"
-        --loss-enable-all \
+        --ge_config "$config" \
+        --loss-enable-rs \
         --seed "${seed}" \
         --output_dir "${output_dir}" \
-        --fp16
+        --fp16 \
+        --num_nodes "${NNODES}"
 
       echo "Completed experiment: $run_id"
       echo "--------------------------------"
@@ -130,6 +138,47 @@ for config in "${CONFIGS[@]}"; do
 done
 
 echo "All ge fsdp exp completed"
+
+
+echo "Det fsdp exp started"
+
+for config in "${CONFIGS_DET[@]}"; do
+  for gpus in "${GPUS_LIST[@]}"; do
+    for seed in "${SEEDS[@]}"; do
+      ts=$(date +%Y%m%d-%H%M%S)
+
+      run_id="${gpus}gpus_${DATASET}_seed${seed}_loss-rate_${config}_${ts}"
+      output_dir="output_piqa/${DATASET}"
+
+      echo "Starting experiment: $run_id"
+
+      # Make run_id visible to Python code (lossy_patch.py)
+      export RUN_ID="${run_id}"
+
+      TORCH_LOGS="+fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
+      torchrun --nproc_per_node="${gpus}" src/main_fsdp.py \
+        --model_name "$MODEL" \
+        --dataset "$DATASET" \
+        --batch_size "${PER_DEVICE_BS}" \
+        --learning_rate "${LR}" \
+        --run_id "$run_id" \
+        --epochs 20 \
+        --seed "$seed" \
+        --output_dir "$output_dir" \
+              --eval_steps 20 \
+        --loss-enable-rs \
+        --loss_type "det" \
+        --det_config "$config" \
+        --num_nodes "${NNODES}" \
+        --fp16
+
+      echo "Completed experiment: $run_id"
+      echo "--------------------------------"
+    done
+  done
+done
+
+echo "All det fsdp exp completed"
 
 echo "All fsdp experiments completed!"
 
