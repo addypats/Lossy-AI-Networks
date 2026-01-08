@@ -154,7 +154,7 @@ def _write_layer_row(entry: dict) -> None:
 
 
 
-def _record_packets_instance(fn_name: str, t: torch.Tensor, stats: dict) -> None:
+def _record_packets_instance(fn_name: str, t: torch.Tensor, stats: dict, *, enable_allgather: bool) -> None:
     """
     Associate this call (AG or RS) with a "layer instance" using:
       shape_key = (global_elems, dtype)
@@ -268,13 +268,24 @@ def _record_packets_instance(fn_name: str, t: torch.Tensor, stats: dict) -> None
     if entry.get("written", False):
         return
 
-    # Once both AG and RS stats are present, write the CSV row and mark written
-    if (
-        entry["ag_total_packets"] is not None
-        and entry["rs_total_packets"] is not None
-    ):
+    # # Once both AG and RS stats are present, write the CSV row and mark written
+    # if (
+    #     entry["ag_total_packets"] is not None
+    #     and entry["rs_total_packets"] is not None
+    # ):
+    #     _write_layer_row(entry)
+    #     entry["written"] = True
+    
+    # Write once we have *something meaningful*.
+    # - If you run RS-only, you'll still get rows.
+    # - If you run AG+RS, it will still only write once (after both appear).
+    have_ag = (entry["ag_total_packets"] is not None)
+    have_rs = (entry["rs_total_packets"] is not None)
+
+    if have_rs and (not enable_allgather or have_ag):
         _write_layer_row(entry)
         entry["written"] = True
+
 
 
 def _apply_packet_loss_(
@@ -646,7 +657,7 @@ def install_lossy_collectives(
                         t = args[1]
                         if _should_touch_tensor(t):
                             stats = _apply_packet_loss_(t, loss, tag="ag.input")
-                            _record_packets_instance(fn_name, t, stats)
+                            _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
 
                 elif fn_name == "reduce_scatter_tensor" and enable_rs and inject_here:
                     # reduce_scatter_tensor(output, input, group=...)
@@ -654,7 +665,7 @@ def install_lossy_collectives(
                         t = args[1]
                         if _should_touch_tensor(t):
                             stats = _apply_packet_loss_(t, loss, tag="rs.input")
-                            _record_packets_instance(fn_name, t, stats)
+                            _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
 
                 elif fn_name == "all_reduce" and enable_allreduce and inject_here:
                     # all_reduce(tensor, group=...)

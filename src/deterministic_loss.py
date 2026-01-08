@@ -335,7 +335,7 @@ class DeterministicBurstLossyNetwork:
     #     with open(txt_path, "w") as f:
     #         f.write("\n".join(lines))
     
-    def _write_episode_files(self, ep: dict):
+    # def _write_episode_files(self, ep: dict):
         # --- be defensive: FSDP can trigger close/write in odd moments ---
         state = ep.get("state", "?")
         episode_index = ep.get("episode_index", "?")
@@ -395,16 +395,99 @@ class DeterministicBurstLossyNetwork:
         with open(txt_path, "w") as f:
             f.write("\n".join(lines))
 
+    def _write_episode_files(self, ep: dict):
+        # Defensive defaults
+        state = ep.get("state", "?")
+        episode_index = ep.get("episode_index", "?")
+        base = f"{self.filename_prefix}{state}_{episode_index}"
+
+        json_path = os.path.join(self.log_dir, base + ".json")
+        txt_path  = os.path.join(self.log_dir, base + ".txt")
+
+        # Write JSON
+        with open(json_path, "w") as f:
+            json.dump(ep, f, indent=2)
+
+        # Format timestamps
+        start_wall = ep.get("start_time_wall")
+        end_wall   = ep.get("end_time_wall")
+
+        start_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_wall)) if start_wall else "-"
+        end_str   = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_wall)) if end_wall else "-"
+
+        wall_time_sec = float(ep.get("wall_time_sec") or 0.0)
+
+        lossy_calls     = int(ep.get("lossy_calls") or 0)
+        optimizer_steps = int(ep.get("optimizer_steps") or 0)
+        gs_start        = ep.get("global_step_start", None)
+        gs_end          = ep.get("global_step_end", None)
+
+        packets = int(ep.get("packets") or 0)
+        dropped = int(ep.get("dropped") or 0)
+
+        rt_lossy_calls    = ep.get("running_total_lossy_calls", None)
+        rt_opt_steps      = ep.get("running_total_optimizer_steps", None)
+        rt_packets        = ep.get("running_total_packets", None)
+        rt_dropped        = ep.get("running_total_dropped", None)
+        rt_time           = ep.get("running_total_time_sec", None)
+
+        state_ordinal = ep.get("state_ordinal", "?")
+        lrb = ep.get("lrb", None)
+        lrg = ep.get("lrg", None)
+
+        lines = [
+            f"Episode: {str(state).upper()} #{state_ordinal}  (index {episode_index})",
+            f"Start:   {start_str}",
+            f"End:     {end_str}",
+            f"Duration (wall): {wall_time_sec:.6f} s",
+            f"Lossy calls (collectives): {lossy_calls}",
+            f"Optimizer steps:          {optimizer_steps}",
+            f"Global step range:        {gs_start} → {gs_end}",
+            f"Packets sent:             {packets}",
+            f"Packets dropped:          {dropped}",
+            f"Running totals → lossy_calls={rt_lossy_calls}, opt_steps={rt_opt_steps}, "
+            f"packets={rt_packets}, dropped={rt_dropped}, wall_time={rt_time}",
+            f"Params: lrb={lrb}, lrg={lrg}",
+            ""
+        ]
+
+        with open(txt_path, "w") as f:
+            f.write("\n".join(lines))
+
+
+    # def _open_episode(self, state: int):
+    #     now_wall = time.time()
+    #     self._last_mono_ts = perf_counter()
+    #     self._last_wall_ts = now_wall
+    #     self._episode = self._episode_template(state, now_wall)
+    #     if state == GOOD:
+    #         self._episode["state_ordinal"] = self.good_ordinal; self.good_ordinal += 1
+    #     else:
+    #         self._episode["state_ordinal"] = self.bad_ordinal;  self.bad_ordinal  += 1
 
     def _open_episode(self, state: int):
         now_wall = time.time()
         self._last_mono_ts = perf_counter()
         self._last_wall_ts = now_wall
         self._episode = self._episode_template(state, now_wall)
+
+        # ordinals
         if state == GOOD:
             self._episode["state_ordinal"] = self.good_ordinal; self.good_ordinal += 1
         else:
             self._episode["state_ordinal"] = self.bad_ordinal;  self.bad_ordinal  += 1
+
+        # set global step start immediately
+        try:
+            gs = int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
+        except Exception:
+            gs = 0
+        self._episode["global_step_start"] = gs
+        self._episode["global_step_end"] = gs
+
+        # reset per-episode step tracking so the first send() in this episode counts correctly
+        self._last_seen_global_step = gs
+
 
     def _close_episode(self):
         now_wall = time.time()
