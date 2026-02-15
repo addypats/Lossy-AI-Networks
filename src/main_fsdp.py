@@ -247,9 +247,17 @@ def main(args):
     except Exception:
         rank = 0
 
-    base_seed = getattr(args, "seed", 0)
-    # loss seed = base_seed + rank  (you can later separate training_seed vs loss_seed)
-    lossy.set_seed(base_seed + rank)
+    # base_seed = getattr(args, "seed", 0)
+    # # loss seed = base_seed + rank  (you can later separate training_seed vs loss_seed)
+    # lossy.set_seed(base_seed + rank)
+    
+    if loss_type == 'det':
+    # Do nothing! Let the seed from the CSV handle it.
+        pass 
+    else:
+        # For BER or G-E, use a global seed (same for all ranks)
+        lossy.set_seed(args.seed)
+    
     # -------------------------------------------------------------------
 
     enable_ag = args.loss_enable_all or args.loss_enable_ag
@@ -265,6 +273,7 @@ def main(args):
         enable_allreduce=enable_ar,
         min_numel=0,
         num_nodes=args.num_nodes,   # <-- NEW: tell the wrapper how many nodes there are
+        gpus_per_node=args.gpus_per_node, # <-- NEW: tell the wrapper how many GPUs per node (for rank-aware masking)
     )
 
 
@@ -407,6 +416,10 @@ if __name__ == "__main__":
     parser.add_argument('--run_id', type=str, required=True)
     parser.add_argument('-nunf', '--num_unfrozen_layers', type=int, default=None, 
                         help='Number of unfrozen layers in the model. If None, all layers are unfrozen.')
+    
+    # number of GPUs per node for dist training setup
+    parser.add_argument('--gpus_per_node', type=int, default=4, help='Physical GPUs per server')
+    
     # ... your existing argparse setup ...
     parser.add_argument("--loss-enable-ag", action="store_true",
                     help="Inject loss into all_gather_into_tensor.")

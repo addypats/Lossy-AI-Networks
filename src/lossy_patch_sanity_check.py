@@ -566,6 +566,7 @@ def install_lossy_collectives(
     enable_allreduce: bool = True,
     min_numel: int = 0,
     num_nodes: int = 1,
+    gpus_per_node: int = 4, # Add this parameter
 ):
     """
     Monkey-patch torch.distributed collectives to inject loss + (optional) log stats.
@@ -591,28 +592,51 @@ def install_lossy_collectives(
         w = int(os.environ.get("WORLD_SIZE", "1"))
         return r, w
 
+    # for automatic recognitioin of number of GPUs
+    # def _logical_topology(rank: int, world_size: int, num_nodes: int):
+    #     # If user says 1 node, treat as single node (no boundary injection)
+    #     if num_nodes is None or num_nodes <= 1:
+    #         gpn = world_size
+    #         node_id = 0
+    #         input_rank = 0
+    #         return gpn, node_id, input_rank
+
+    #     # Assume num_nodes divides world_size in your experiments (8 and {1,2,4,8})
+    #     # If it doesn't, last "node" may be smaller; we still compute a sane mapping.
+    #     gpn = max(1, world_size // num_nodes)
+    #     if gpn * num_nodes != world_size:
+    #         # uneven partition: fall back to ceil partitioning
+    #         gpn = (world_size + num_nodes - 1) // num_nodes
+
+    #     node_id = rank // gpn
+    #     if node_id >= num_nodes:
+    #         node_id = num_nodes - 1
+
+    #     input_rank = node_id * gpn
+    #     if input_rank >= world_size:
+    #         input_rank = max(0, world_size - 1)
+    #     return gpn, node_id, input_rank
+
+    # for real dist training with each server has 4 gpus
     def _logical_topology(rank: int, world_size: int, num_nodes: int):
-        # If user says 1 node, treat as single node (no boundary injection)
-        if num_nodes is None or num_nodes <= 1:
-            gpn = world_size
-            node_id = 0
-            input_rank = 0
-            return gpn, node_id, input_rank
+        # 1. Handle the Baseline (1 node)
+        if num_nodes <= 1:
+            # No inter-node boundaries exist, so we return 
+            # an input_rank that won't trigger injection logic 
+            # (or just return 0 and let the 'num_nodes <= 1' check in the wrapper handle it)
+            return world_size, 0, 0
 
-        # Assume num_nodes divides world_size in your experiments (8 and {1,2,4,8})
-        # If it doesn't, last "node" may be smaller; we still compute a sane mapping.
-        gpn = max(1, world_size // num_nodes)
-        if gpn * num_nodes != world_size:
-            # uneven partition: fall back to ceil partitioning
-            gpn = (world_size + num_nodes - 1) // num_nodes
+        # 2. Physical Reality for Multi-node
+        # We know each server has exactly 4 GPUs
+        gpn = 4 
 
+        # Identify which server this rank belongs to
         node_id = rank // gpn
-        if node_id >= num_nodes:
-            node_id = num_nodes - 1
-
+        
+        # Designate the first rank of EACH physical server (0, 4, 8, 12...)
+        # as the 'injector' for data leaving that node.
         input_rank = node_id * gpn
-        if input_rank >= world_size:
-            input_rank = max(0, world_size - 1)
+        
         return gpn, node_id, input_rank
 
     def _bump_call_counter():
