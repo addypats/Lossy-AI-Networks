@@ -54,12 +54,12 @@ export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs
 export NCCL_ALGO=Ring
 
 # Args for dist training
-export MASTER_ADDR=172.31.26.125      # Node 0 private IP
+export MASTER_ADDR=172.31.0.173      # Node 0 private IP
 export MASTER_PORT=29500
-export NNODES=2
+export NNODES=4
 # export NPROC_PER_NODE=4
 
-export NCCL_SOCKET_IFNAME=ens5   # same as above
+export NCCL_SOCKET_IFNAME=enp39s0   # same as above
 export NCCL_IB_DISABLE=1
 export NCCL_DEBUG=INFO
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
@@ -192,7 +192,8 @@ for config in "${CONFIGS_DET[@]}"; do
         --loss-enable-all \
         --loss_type "det" \
         --det_config "$config" \
-        --num_nodes "${NNODES}"
+        --num_nodes "${NNODES}" \
+        --fp16
       echo "Completed experiment: $run_id"
       echo "--------------------------------"
     done

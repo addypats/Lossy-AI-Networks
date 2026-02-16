@@ -8,7 +8,7 @@ MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=()
+# LOSS_RATES=("0.01")
 
 # Testing
 # LOSS_RATES=("1")
@@ -23,7 +23,7 @@ SEEDS=("10" "20" "30")
 
 # GPUs on this machine (e.g., 4 GPUs)
 # GPUS_LIST=(1 2 4)
-GPUS_LIST=(2)
+GPUS_LIST=(4)
 #SEEDS=(1 2 3)
 
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
@@ -34,7 +34,7 @@ LR=1e-5
 
 # CONFIGS=("one_precent" "half_percent" "short_1percent" "short_half_percent")
 # CONFIGS=("short_1percent" "short_half_percent")
-# CONFIGS=("half_percent" "short_1percent" "short_half_percent")
+CONFIGS=()
 
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
@@ -42,7 +42,7 @@ LR=1e-5
 CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
 
 # GPU settings
-export CUDA_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export WANDB_PROJECT="lossy_dist_fsdp_study"
 
 
@@ -53,7 +53,7 @@ export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs
 export NCCL_ALGO=Ring
 
 # Args for dist training
-export MASTER_ADDR=172.31.49.170     # Node 0 private IP
+export MASTER_ADDR=172.31.0.173     # Node 0 private IP
 export MASTER_PORT=29500
 export NNODES=4
 # export NPROC_PER_NODE=4
@@ -85,7 +85,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
 
       TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
       torchrun --nnodes=$NNODES \
-  	--node_rank=2 \
+  	--node_rank=3 \
   	--master_addr=$MASTER_ADDR \
   	--master_port=$MASTER_PORT \
 	--nproc_per_node="${gpus}" \
@@ -129,7 +129,7 @@ for config in "${CONFIGS[@]}"; do
 
       TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
       torchrun --nnodes=$NNODES \
-        --node_rank=2 \
+        --node_rank=3 \
         --master_addr=$MASTER_ADDR \
         --master_port=$MASTER_PORT \
         --nproc_per_node="${gpus}" \
@@ -174,7 +174,7 @@ for config in "${CONFIGS_DET[@]}"; do
 
       TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
 	torchrun --nnodes=$NNODES \
-        --node_rank=2 \
+        --node_rank=3 \
         --master_addr=$MASTER_ADDR \
         --master_port=$MASTER_PORT \
         --nproc_per_node="${gpus}" \
@@ -191,7 +191,8 @@ for config in "${CONFIGS_DET[@]}"; do
         --loss-enable-all \
         --loss_type "det" \
         --det_config "$config" \
-        --num_nodes "${NNODES}"
+        --num_nodes "${NNODES}" \
+        --fp16
       echo "Completed experiment: $run_id"
       echo "--------------------------------"
     done
