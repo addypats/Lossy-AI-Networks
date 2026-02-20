@@ -28,6 +28,10 @@ class LossyStepBump(TrainerCallback):
     def on_step_begin(self, args, state, control, **kwargs):
         # HF keeps state.global_step consistent across ranks.
         os.environ["LOSSY_GLOBAL_STEP"] = str(state.global_step)
+        
+        # --- NEW: Reset our internal layer counter at the start of every step ---
+        from lossy_patch_sanity_check import reset_lossy_counter
+        reset_lossy_counter()
 
 
 class LossyGradHookCallback(TrainerCallback):

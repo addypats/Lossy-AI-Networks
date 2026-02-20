@@ -26,6 +26,9 @@ _RUN_ID = os.environ.get("RUN_ID", "default_run")
 os.makedirs(_LOG_ROOT, exist_ok=True)
 _PACKET_LOG_PATH = os.path.join(_LOG_ROOT, f"{_RUN_ID}_packet_log.csv")
 
+# --- Add this near the top with other globals ---
+_CURRENT_ITERATION_CALL_COUNT = 0
+
 # ---- Per-layer-instance logging state -----------------------------------
 
 # We treat each (global_elems, dtype, occurrence_index) as a distinct "layer instance".
@@ -42,6 +45,13 @@ _HIT_ONCE = {"all_gather_into_tensor": False,
              "reduce_scatter_tensor": False,
              "all_reduce": False}
 
+
+# --- Add this function to be called by your trainer ---
+def reset_lossy_counter():
+    """Call this at the start of every training step/iteration."""
+    global _CURRENT_ITERATION_CALL_COUNT
+    _CURRENT_ITERATION_CALL_COUNT = 0
+    
 
 
 def _is_payload_tensor(t: torch.Tensor) -> bool:
@@ -650,85 +660,138 @@ def install_lossy_collectives(
     def _should_touch_tensor(t: torch.Tensor) -> bool:
         return _is_payload_tensor(t) and (t.numel() >= int(min_numel))
 
+    # Wrap funtion for loss in all layers
+
+    # def _wrap(fn_name: str):
+    #     original = getattr(dist, fn_name)
+
+    #     def wrapped(*args, **kwargs):
+    #         t0 = time.time()
+    #         rank, world_size = _get_rank_world()
+    #         gpn, node_id, input_rank = _logical_topology(rank, world_size, num_nodes)
+            
+    #         # One-time "wrapper hit" print (rank 0 only)
+    #         if rank == 0 and not _HIT_ONCE.get(fn_name, False):
+    #             _HIT_ONCE[fn_name] = True
+    #             print(f"[HIT] wrapper={fn_name} first_seen call_counter={os.environ.get('LOSSY_CALL_COUNTER')} "
+    #                 f"enable_ag={enable_allgather} enable_rs={enable_rs} enable_ar={enable_allreduce}",
+    #                 flush=True)
+
+
+    #         # One-time topology print per rank (helps validate 8x1 / 4x2 / 2x4 emulation)
+    #         if not hasattr(wrapped, "_printed_topo"):
+    #             host = socket.gethostname()
+    #             print(
+    #                 f"[TOPO] host={host} rank={rank}/{world_size} "
+    #                 f"num_nodes={num_nodes} gpus_per_node={gpn} node_id={node_id} "
+    #                 f"input_rank={input_rank} inject={(rank == input_rank)}",
+    #                 flush=True
+    #             )
+    #             wrapped._printed_topo = True
+
+    #         # Always bump call counter (even if we don't inject) for debugging correlation
+    #         _bump_call_counter()
+
+    #         # If user wants "no inter-node loss", skip injection
+    #         if num_nodes is None or num_nodes <= 1:
+    #             return original(*args, **kwargs)
+
+    #         # Only boundary ranks inject (your intended model)
+    #         inject_here = (rank == input_rank)
+
+    #         try:
+    #             if fn_name == "all_gather_into_tensor" and enable_allgather and inject_here:
+    #                 # all_gather_into_tensor(output, input, group=...)
+    #                 if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+    #                     t = args[1]
+    #                     if _should_touch_tensor(t):
+    #                         stats = _apply_packet_loss_(t, loss, tag="ag.input")
+    #                         _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
+
+    #             elif fn_name == "reduce_scatter_tensor" and enable_rs and inject_here:
+    #                 # reduce_scatter_tensor(output, input, group=...)
+    #                 if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+    #                     t = args[1]
+    #                     if _should_touch_tensor(t):
+    #                         stats = _apply_packet_loss_(t, loss, tag="rs.input")
+    #                         _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
+
+    #             elif fn_name == "all_reduce" and enable_allreduce and inject_here:
+    #                 # all_reduce(tensor, group=...)
+    #                 if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+    #                     t = args[0]
+    #                     if _should_touch_tensor(t):
+    #                         _ = _apply_packet_loss_(t, loss, tag="ar.tensor")
+
+    #         except Exception as e:
+    #             # Never crash training due to the lossy wrapper.
+    #             import traceback
+    #             print(
+    #                 f"[LOSSY][ERROR] rank={rank} fn={fn_name}: {type(e).__name__}: {e}",
+    #                 flush=True
+    #             )
+    #             traceback.print_exc()
+
+    #         # Always call the real collective on all ranks
+    #         out = original(*args, **kwargs)
+
+    #         # Optional timing print (kept off by default)
+    #         # dt = (time.time() - t0) * 1000.0
+    #         # if rank == 0:
+    #         #     print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms", flush=True)
+
+    #         return out
+
+    #     return wrapped
+    
+    # Modified wrap for loss in individual layers
+    
+    # --- Modified _wrap function ---
     def _wrap(fn_name: str):
         original = getattr(dist, fn_name)
 
         def wrapped(*args, **kwargs):
-            t0 = time.time()
+            global _CURRENT_ITERATION_CALL_COUNT
             rank, world_size = _get_rank_world()
             gpn, node_id, input_rank = _logical_topology(rank, world_size, num_nodes)
             
-            # One-time "wrapper hit" print (rank 0 only)
-            if rank == 0 and not _HIT_ONCE.get(fn_name, False):
-                _HIT_ONCE[fn_name] = True
-                print(f"[HIT] wrapper={fn_name} first_seen call_counter={os.environ.get('LOSSY_CALL_COUNTER')} "
-                    f"enable_ag={enable_allgather} enable_rs={enable_rs} enable_ar={enable_allreduce}",
-                    flush=True)
+            # 1. Increment call counter for every collective call
+            current_call_id = _CURRENT_ITERATION_CALL_COUNT
+            _CURRENT_ITERATION_CALL_COUNT += 1
 
+            # 2. Check if this specific call is our target
+            target_env = os.environ.get("TARGET_LAYER_ID")
+            is_target_layer = (target_env is not None and str(current_call_id) == str(target_env))
+            
+            inject_here = (rank == input_rank) and is_target_layer
 
-            # One-time topology print per rank (helps validate 8x1 / 4x2 / 2x4 emulation)
-            if not hasattr(wrapped, "_printed_topo"):
-                host = socket.gethostname()
-                print(
-                    f"[TOPO] host={host} rank={rank}/{world_size} "
-                    f"num_nodes={num_nodes} gpus_per_node={gpn} node_id={node_id} "
-                    f"input_rank={input_rank} inject={(rank == input_rank)}",
-                    flush=True
-                )
-                wrapped._printed_topo = True
-
-            # Always bump call counter (even if we don't inject) for debugging correlation
-            _bump_call_counter()
-
-            # If user wants "no inter-node loss", skip injection
-            if num_nodes is None or num_nodes <= 1:
-                return original(*args, **kwargs)
-
-            # Only boundary ranks inject (your intended model)
-            inject_here = (rank == input_rank)
-
+            # Logic: Only enter loss block if it's the target layer AND the correct rank
             try:
-                if fn_name == "all_gather_into_tensor" and enable_allgather and inject_here:
-                    # all_gather_into_tensor(output, input, group=...)
-                    if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-                        t = args[1]
-                        if _should_touch_tensor(t):
-                            stats = _apply_packet_loss_(t, loss, tag="ag.input")
-                            _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
+                if inject_here:
+                    if fn_name == "all_gather_into_tensor" and enable_allgather:
+                        if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                            t = args[1]
+                            if _should_touch_tensor(t):
+                                stats = _apply_packet_loss_(t, loss, tag="ag.target")
+                                _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
 
-                elif fn_name == "reduce_scatter_tensor" and enable_rs and inject_here:
-                    # reduce_scatter_tensor(output, input, group=...)
-                    if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-                        t = args[1]
-                        if _should_touch_tensor(t):
-                            stats = _apply_packet_loss_(t, loss, tag="rs.input")
-                            _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
-
-                elif fn_name == "all_reduce" and enable_allreduce and inject_here:
-                    # all_reduce(tensor, group=...)
-                    if len(args) >= 1 and isinstance(args[0], torch.Tensor):
-                        t = args[0]
-                        if _should_touch_tensor(t):
-                            _ = _apply_packet_loss_(t, loss, tag="ar.tensor")
+                    elif fn_name == "reduce_scatter_tensor" and enable_rs:
+                        if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                            t = args[1]
+                            if _should_touch_tensor(t):
+                                stats = _apply_packet_loss_(t, loss, tag="rs.target")
+                                _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
+                
+                # (Optional) Log that we skipped loss for other layers for debugging
+                # elif is_target_layer:
+                #     print(f"Target layer {current_call_id} reached, but rank {rank} is not an injector.")
 
             except Exception as e:
-                # Never crash training due to the lossy wrapper.
                 import traceback
-                print(
-                    f"[LOSSY][ERROR] rank={rank} fn={fn_name}: {type(e).__name__}: {e}",
-                    flush=True
-                )
+                print(f"[LOSSY][ERROR] rank={rank} target={target_env}: {e}")
                 traceback.print_exc()
 
-            # Always call the real collective on all ranks
-            out = original(*args, **kwargs)
-
-            # Optional timing print (kept off by default)
-            # dt = (time.time() - t0) * 1000.0
-            # if rank == 0:
-            #     print(f"[INTROSPECT] {fn_name} dt={dt:.2f} ms", flush=True)
-
-            return out
+            return original(*args, **kwargs)
 
         return wrapped
 

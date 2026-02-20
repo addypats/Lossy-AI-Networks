@@ -49,6 +49,11 @@ export WANDB_PROJECT="lossy_net_fsdp_study"
 export NNODES=8
 
 
+# Target loss on a specific layer
+# Set this to the ID of the layer you want to sabotage. 
+# Check your CSV log from a previous run to find the exact ID.
+export TARGET_LAYER_ID="3"
+
 # Logging Directory
 export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs
 
