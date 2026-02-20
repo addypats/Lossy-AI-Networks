@@ -39,7 +39,7 @@ hotpotqa:
 
 squad:
   report_ttac: [0.4, 0.6, 0.8]
-  target_acc: 0.8
+  target_acc: 82
 
 tinysquad:
   report_ttac: [0.4, 0.5] # thresholds you care about

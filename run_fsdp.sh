@@ -5,7 +5,13 @@ set -euo pipefail
 # MODEL="Qwen/Qwen2-1.5B"
 MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
-DATASET="piqa"
+# MODEL="meta-llama/Llama-2-7b-hf"
+# MODEL_ALIAS="Llama_2-7B"
+# MODEL="openlm-research/open_llama_7b"
+# MODEL="huggyllama/llama-7b"
+# MODEL_ALIAS="openlm-LlaMa"
+# DATASET="piqa"
+DATASET="squad"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
 LOSS_RATES=()
@@ -38,6 +44,10 @@ CONFIGS=()
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
 CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
+# CONFIGS_DET=("high_persistence_low_intensity_1_0.4")
+# CONFIGS_DET=("high_persistence_low_intensity_1_0.3")
+# CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
+# CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
 
 # GPU settings
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
@@ -48,6 +58,7 @@ export WANDB_PROJECT="lossy_net_fsdp_study"
 # export NNODES=4
 export NNODES=8
 
+# NNODES=(4 8)
 
 # Target loss on a specific layer
 # Set this to the ID of the layer you want to sabotage. 
@@ -171,8 +182,9 @@ for config in "${CONFIGS_DET[@]}"; do
         --seed "$seed" \
         --output_dir "$output_dir" \
               --eval_steps 20 \
-        --loss-enable-rs \
-        --loss-enable-ag \
+	--loss-enable-rs \
+	--loss-enable-ag \
+	--loss-enable-ar \
         --loss_type "det" \
         --det_config "$config" \
         --num_nodes "${NNODES}" \
