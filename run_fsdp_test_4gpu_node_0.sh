@@ -17,7 +17,7 @@ DATASET="piqa"
 # NUM_NODES=("8" "10")
 #NUM_NODES=("2")
 # SEEDS=("10" "20" "30" "40" "50")
-SEEDS=("10" "20" "30")
+SEEDS=("10")
 # SEEDS=("30")
 
 
@@ -29,7 +29,7 @@ GPUS_LIST=(4)
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
 
 PER_DEVICE_BS=2
-PER_DEVICE_BS=16
+# PER_DEVICE_BS=16
 
 LR=1e-5
 #EPOCHS=1
@@ -197,7 +197,9 @@ for config in "${CONFIGS_DET[@]}"; do
         --seed "$seed" \
         --output_dir "$output_dir" \
               --eval_steps 20 \
-        --loss-enable-all \
+        --loss-enable-rs \
+	--loss-enable-ag \
+	--loss-enable-ar \
         --loss_type "det" \
         --det_config "$config" \
         --num_nodes "${NNODES}" \

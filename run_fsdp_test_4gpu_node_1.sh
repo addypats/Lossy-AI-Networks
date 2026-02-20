@@ -17,7 +17,7 @@ DATASET="piqa"
 # NUM_NODES=("8" "10")
 #NUM_NODES=("2")
 # SEEDS=("10" "20" "30" "40" "50")
-SEEDS=("10" "20" "30")
+SEEDS=("10")
 # SEEDS=("30")
 
 
@@ -197,7 +197,9 @@ for config in "${CONFIGS_DET[@]}"; do
         --seed "$seed" \
         --output_dir "$output_dir" \
               --eval_steps 20 \
-        --loss-enable-all \
+        --loss-enable-rs \
+	--loss-enable-ag \
+	--loss-enable-ar \
         --loss_type "det" \
         --det_config "$config" \
         --num_nodes "${NNODES}" \
