@@ -27,7 +27,10 @@ GPUS_LIST=(4)
 #SEEDS=(1 2 3)
 
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
-PER_DEVICE_BS=8
+
+PER_DEVICE_BS=2
+PER_DEVICE_BS=16
+
 LR=1e-5
 #EPOCHS=1
 #EVAL_STEPS=50
@@ -48,7 +51,8 @@ export WANDB_PROJECT="lossy_dist_fsdp_study"
 # Target loss on a specific layer
 # Set this to the ID of the layer you want to sabotage. 
 # Check your CSV log from a previous run to find the exact ID.
-export TARGET_LAYER_ID="3"
+export TARGET_LAYER_ID="2"
+# export TARGET_LAYER_ID="20"
 
 
 # Logging Directory
