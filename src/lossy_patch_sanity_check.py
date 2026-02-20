@@ -755,9 +755,25 @@ def install_lossy_collectives(
             rank, world_size = _get_rank_world()
             gpn, node_id, input_rank = _logical_topology(rank, world_size, num_nodes)
             
-            # 1. Increment call counter for every collective call
-            current_call_id = _CURRENT_ITERATION_CALL_COUNT
-            _CURRENT_ITERATION_CALL_COUNT += 1
+            # --- NEW LOGIC START: Filter for Payload Tensors ---
+            # Look for the tensor in positional args or kwargs
+            t_in = None
+            if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                t_in = args[1]
+            elif "input_tensor" in kwargs:
+                t_in = kwargs["input_tensor"]
+
+            # Only count and sabotage tensors larger than a threshold (e.g., 1024 elements).
+            # Small tensors (size 2, 16, etc.) are almost always metadata or evaluation metrics.
+            is_payload = t_in is not None and t_in.numel() > 1024
+
+            if is_payload:
+                current_call_id = _CURRENT_ITERATION_CALL_COUNT
+                _CURRENT_ITERATION_CALL_COUNT += 1
+            else:
+                # If it's a small metric tensor, bypass the counter and the loss logic entirely
+                return original(*args, **kwargs)
+            # --- NEW LOGIC END ---
 
             # 2. Check if this specific call is our target
             target_env = os.environ.get("TARGET_LAYER_ID")
@@ -765,26 +781,18 @@ def install_lossy_collectives(
             
             inject_here = (rank == input_rank) and is_target_layer
 
-            # Logic: Only enter loss block if it's the target layer AND the correct rank
             try:
                 if inject_here:
+                    # We already extracted t_in above, so we can use it directly
                     if fn_name == "all_gather_into_tensor" and enable_allgather:
-                        if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-                            t = args[1]
-                            if _should_touch_tensor(t):
-                                stats = _apply_packet_loss_(t, loss, tag="ag.target")
-                                _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
+                        if _should_touch_tensor(t_in):
+                            stats = _apply_packet_loss_(t_in, loss, tag="ag.target")
+                            _record_packets_instance(fn_name, t_in, stats, enable_allgather=enable_allgather)
 
                     elif fn_name == "reduce_scatter_tensor" and enable_rs:
-                        if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-                            t = args[1]
-                            if _should_touch_tensor(t):
-                                stats = _apply_packet_loss_(t, loss, tag="rs.target")
-                                _record_packets_instance(fn_name, t, stats, enable_allgather=enable_allgather)
-                
-                # (Optional) Log that we skipped loss for other layers for debugging
-                # elif is_target_layer:
-                #     print(f"Target layer {current_call_id} reached, but rank {rank} is not an injector.")
+                        if _should_touch_tensor(t_in):
+                            stats = _apply_packet_loss_(t_in, loss, tag="rs.target")
+                            _record_packets_instance(fn_name, t_in, stats, enable_allgather=enable_allgather)
 
             except Exception as e:
                 import traceback
