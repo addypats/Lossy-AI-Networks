@@ -755,35 +755,34 @@ def install_lossy_collectives(
             rank, world_size = _get_rank_world()
             gpn, node_id, input_rank = _logical_topology(rank, world_size, num_nodes)
             
-            # --- NEW LOGIC START: Filter for Payload Tensors ---
-            # Look for the tensor in positional args or kwargs
+            # 1. Extract the tensor to check its size
             t_in = None
             if len(args) >= 2 and isinstance(args[1], torch.Tensor):
                 t_in = args[1]
             elif "input_tensor" in kwargs:
                 t_in = kwargs["input_tensor"]
 
-            # Only count and sabotage tensors larger than a threshold (e.g., 1024 elements).
-            # Small tensors (size 2, 16, etc.) are almost always metadata or evaluation metrics.
-            is_payload = t_in is not None and t_in.numel() > 1024
+            # 2. SIZE THRESHOLD CHECK
+            # FSDP shards are large (millions of params). 
+            # Metrics (like the [2] and [16] in your error) are small.
+            # We only increment the global counter for "real" model payloads.
+            is_payload = t_in is not None and t_in.numel() > 1024 
 
             if is_payload:
                 current_call_id = _CURRENT_ITERATION_CALL_COUNT
                 _CURRENT_ITERATION_CALL_COUNT += 1
             else:
-                # If it's a small metric tensor, bypass the counter and the loss logic entirely
+                # It's a metric or small sync (like the one that caused the crash).
+                # We run the original NCCL op and RETURN IMMEDIATELY.
                 return original(*args, **kwargs)
-            # --- NEW LOGIC END ---
 
-            # 2. Check if this specific call is our target
+            # 3. Target logic (only reached by large tensors)
             target_env = os.environ.get("TARGET_LAYER_ID")
             is_target_layer = (target_env is not None and str(current_call_id) == str(target_env))
-            
             inject_here = (rank == input_rank) and is_target_layer
 
             try:
                 if inject_here:
-                    # We already extracted t_in above, so we can use it directly
                     if fn_name == "all_gather_into_tensor" and enable_allgather:
                         if _should_touch_tensor(t_in):
                             stats = _apply_packet_loss_(t_in, loss, tag="ag.target")
