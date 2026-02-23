@@ -42,10 +42,10 @@ CONFIGS=()
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3")
-# CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
+CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.4")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.3")
-CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
+# CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
 
 # GPU settings
@@ -202,6 +202,8 @@ for config in "${CONFIGS_DET[@]}"; do
         --output_dir "$output_dir" \
               --eval_steps 20 \
         --loss-enable-ag \
+        --loss-enable-ar \
+        --loss-enable-rs \
         --loss_type "det" \
         --det_config "$config" \
         --num_nodes "${NNODES}" \
