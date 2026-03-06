@@ -8,6 +8,7 @@ from collections import defaultdict
 
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 
 from comms import LossyNetwork, MAX_PAYLOAD_BYTES
 
@@ -29,6 +30,15 @@ _PACKET_LOG_PATH = os.path.join(_LOG_ROOT, f"{_RUN_ID}_packet_log.csv")
 # --- Add this near the top with other globals ---
 _CURRENT_ITERATION_CALL_COUNT = 0
 
+# ---- Gradient Comparison Globals ----------------------------------------
+_GRAD_COMPARISONS_ENABLED = os.environ.get("ENABLE_GRAD_COMPARISONS", "0") == "1"
+_GRAD_STORAGE = {}  # {layer_id: {rank: tensor_data}}
+_COMPARISON_LOG_PATH = os.path.join(_LOG_ROOT, f"{_RUN_ID}_gradient_comparisons.csv")
+_GRAD_TIMEOUT_STEPS = 5  # Clean up gradients after this many steps without full collection
+_GRAD_CLEANUP_COUNTER = 0
+_CURRENT_NUM_NODES = 1  # Will be set by install_lossy_collectives
+_GPUS_PER_NODE = 4  # Will be set by install_lossy_collectives
+
 # ---- Per-layer-instance logging state -----------------------------------
 
 # We treat each (global_elems, dtype, occurrence_index) as a distinct "layer instance".
@@ -49,8 +59,13 @@ _HIT_ONCE = {"all_gather_into_tensor": False,
 # --- Add this function to be called by your trainer ---
 def reset_lossy_counter():
     """Call this at the start of every training step/iteration."""
-    global _CURRENT_ITERATION_CALL_COUNT
+    global _CURRENT_ITERATION_CALL_COUNT, _GRAD_CLEANUP_COUNTER
     _CURRENT_ITERATION_CALL_COUNT = 0
+    
+    # Periodic cleanup of gradient storage
+    _GRAD_CLEANUP_COUNTER += 1
+    if _GRAD_CLEANUP_COUNTER % _GRAD_TIMEOUT_STEPS == 0:
+        _cleanup_stale_gradients()
     
 
 
@@ -301,6 +316,242 @@ def _record_packets_instance(fn_name: str, t: torch.Tensor, stats: dict, *, enab
         _write_layer_row(entry)
         entry["written"] = True
 
+
+# ---- Gradient Comparison Functions ------------------------------------
+
+def _compute_gradient_similarities(grad1: torch.Tensor, grad2: torch.Tensor):
+    """Compute the 3 similarity metrics for gradient comparison."""
+    try:
+        # 1. Cosine Similarity (Direction of learning)
+        cos_sim = F.cosine_similarity(grad1.unsqueeze(0), grad2.unsqueeze(0), dim=1).item()
+        
+        # 2. Relative Magnitude Difference (Learning speed)
+        norm1, norm2 = torch.norm(grad1).item(), torch.norm(grad2).item()
+        rel_mag_diff = abs(norm1 - norm2) / max(norm1, norm2, 1e-8)
+        
+        # 3. Correlation (Internal patterns)
+        if len(grad1) > 1:
+            correlation = torch.corrcoef(torch.stack([grad1, grad2]))[0,1].item()
+            correlation = 0.0 if torch.isnan(torch.tensor(correlation)) else correlation
+        else:
+            correlation = 1.0 if torch.allclose(grad1, grad2) else 0.0
+        
+        return {
+            "cosine_similarity": float(cos_sim),
+            "rel_magnitude_diff": float(rel_mag_diff), 
+            "correlation": float(correlation)
+        }
+    except Exception as e:
+        # Fallback for numerical issues
+        return {
+            "cosine_similarity": 0.0,
+            "rel_magnitude_diff": 1.0,
+            "correlation": 0.0,
+            "error": str(e)
+        }
+
+
+def _run_four_stage_comparisons(layer_id: int, grad_dict: dict):
+    """Execute the 4-step comparison strategy (dynamic for 2, 3, or 4 nodes)."""
+    results = []
+    available_ranks = sorted(grad_dict.keys())
+    
+    if len(available_ranks) < 2:
+        return results
+    
+    num_nodes = _CURRENT_NUM_NODES
+    gpus_per_node = _GPUS_PER_NODE
+    
+    # Step 1: Intra-Node (Baseline) - Same server comparisons
+    for server in range(num_nodes):
+        server_ranks = [r for r in available_ranks if server*gpus_per_node <= r < (server+1)*gpus_per_node]
+        for i, rank1 in enumerate(server_ranks):
+            for rank2 in server_ranks[i+1:]:
+                metrics = _compute_gradient_similarities(grad_dict[rank1], grad_dict[rank2])
+                results.append({
+                    "layer_id": layer_id,
+                    "comparison_type": "intra_node",
+                    "rank1": rank1, "rank2": rank2,
+                    "server1": server, "server2": server,
+                    **metrics
+                })
+    
+    # Step 2: Inter-Node (Network) - Different servers, same relative position
+    for pos in range(gpus_per_node):  # positions within each server
+        server_ranks = [server*gpus_per_node + pos for server in range(num_nodes) 
+                       if server*gpus_per_node + pos in available_ranks]
+        for i, rank1 in enumerate(server_ranks):
+            for rank2 in server_ranks[i+1:]:
+                metrics = _compute_gradient_similarities(grad_dict[rank1], grad_dict[rank2])
+                results.append({
+                    "layer_id": layer_id,
+                    "comparison_type": "inter_node",
+                    "rank1": rank1, "rank2": rank2,
+                    "server1": rank1//gpus_per_node, "server2": rank2//gpus_per_node,
+                    **metrics
+                })
+    
+    # Step 3: Cluster Edge (Extreme Distance) - Furthest apart
+    # Calculate extreme pairs dynamically based on actual topology
+    if num_nodes >= 2:
+        # Corner pairs: first GPU of first server vs last GPU of last server, etc.
+        first_server_ranks = [r for r in available_ranks if 0 <= r < gpus_per_node]
+        last_server_ranks = [r for r in available_ranks 
+                           if (num_nodes-1)*gpus_per_node <= r < num_nodes*gpus_per_node]
+        
+        # Create extreme pairs (first server to last server)
+        for i in range(min(len(first_server_ranks), len(last_server_ranks))):
+            if first_server_ranks[i] != last_server_ranks[-(i+1)]:  # Don't compare to self
+                metrics = _compute_gradient_similarities(
+                    grad_dict[first_server_ranks[i]], 
+                    grad_dict[last_server_ranks[-(i+1)]]
+                )
+                results.append({
+                    "layer_id": layer_id,
+                    "comparison_type": "cluster_edge", 
+                    "rank1": first_server_ranks[i], 
+                    "rank2": last_server_ranks[-(i+1)],
+                    "server1": first_server_ranks[i]//gpus_per_node, 
+                    "server2": last_server_ranks[-(i+1)]//gpus_per_node,
+                    **metrics
+                })
+    
+    # Step 4: Global Diversity (Efficiency) - Statistical overview
+    all_grads = [grad_dict[r] for r in available_ranks]
+    if len(all_grads) >= 2:
+        cos_sims, mag_diffs, correlations = [], [], []
+        for i, grad1 in enumerate(all_grads):
+            for grad2 in all_grads[i+1:]:
+                metrics = _compute_gradient_similarities(grad1, grad2)
+                cos_sims.append(metrics["cosine_similarity"])
+                mag_diffs.append(metrics["rel_magnitude_diff"])
+                correlations.append(metrics["correlation"])
+        
+        if cos_sims:  # Ensure we have data
+            results.append({
+                "layer_id": layer_id,
+                "comparison_type": "global_diversity",
+                "rank1": -1, "rank2": -1,  # Aggregate
+                "server1": -1, "server2": -1,
+                "cosine_similarity": float(torch.tensor(cos_sims).mean()),
+                "rel_magnitude_diff": float(torch.tensor(mag_diffs).mean()),
+                "correlation": float(torch.tensor(correlations).mean()),
+                "num_comparisons": len(cos_sims),
+                "num_nodes": num_nodes  # Add topology info to results
+            })
+    
+    return results
+
+
+def _write_comparison_results(results: list, path: str):
+    """Write comparison results to a named CSV file (rank 0 only)."""
+    if not results:
+        return
+        
+    # Only rank 0 writes
+    try:
+        rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+    except Exception:
+        rank = 0
+        
+    if rank != 0:
+        return
+        
+    try:
+        file_exists = os.path.exists(path)
+        with open(path, "a", newline="") as f:
+            fieldnames = [
+                "layer_id", "comparison_type", "rank1", "rank2", 
+                "server1", "server2", "cosine_similarity", 
+                "rel_magnitude_diff", "correlation", "num_comparisons", 
+                "num_nodes", "error"
+            ]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            
+            if not file_exists:
+                writer.writeheader()
+                
+            for result in results:
+                row = {field: result.get(field, "") for field in fieldnames}
+                writer.writerow(row)
+    except Exception as e:
+        print(f"[GRAD_CMP][ERROR] Failed to write comparison results: {e}", flush=True)
+
+
+def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: int, current_call_id: int):
+    """Capture complete gradient tensor before reduce_scatter."""
+    if fn_name != "reduce_scatter_tensor" or not _GRAD_COMPARISONS_ENABLED:
+        return
+        
+    try:
+        # Store flattened gradient copy (move to CPU to avoid GPU memory issues)
+        grad_flat = tensor.detach().clone().flatten().cpu()
+        
+        # Use call_id as layer identifier
+        if current_call_id not in _GRAD_STORAGE:
+            _GRAD_STORAGE[current_call_id] = {}
+        
+        _GRAD_STORAGE[current_call_id][rank] = grad_flat
+        
+        # Trigger comparison when we have enough ranks
+        _maybe_run_comparisons(current_call_id)
+        
+    except Exception as e:
+        print(f"[GRAD_CMP][ERROR] rank={rank} layer={current_call_id}: {e}", flush=True)
+
+
+def _maybe_run_comparisons(layer_id: int):
+    """Run comparisons when enough ranks have reported."""
+    if layer_id not in _GRAD_STORAGE:
+        return
+        
+    rank_count = len(_GRAD_STORAGE[layer_id])
+    
+    # Dynamic minimum based on number of nodes (at least 1 rank per node, minimum 2 total)
+    min_ranks = max(2, min(_CURRENT_NUM_NODES, rank_count))
+    
+    if rank_count >= min_ranks:
+        try:
+            results = _run_four_stage_comparisons(layer_id, _GRAD_STORAGE[layer_id])
+            
+            # Build a unique filename per capture:
+            # {RUN_ID}_gradcmp_layer{layer_id}_nodes{num_nodes}_step{global_step}.csv
+            try:
+                global_step = int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
+            except Exception:
+                global_step = 0
+            fname = (
+                f"{_RUN_ID}_gradcmp"
+                f"_layer{layer_id}"
+                f"_nodes{_CURRENT_NUM_NODES}"
+                f"_step{global_step}"
+                f".csv"
+            )
+            path = os.path.join(_LOG_ROOT, fname)
+            _write_comparison_results(results, path)
+            
+            # Debug print (rank 0 only)
+            try:
+                rank = int(os.environ.get("RANK", "0"))
+                if rank == 0:
+                    print(f"[GRAD_CMP] Written: {fname} ({len(results)} rows, {rank_count} ranks)", flush=True)
+            except Exception:
+                pass
+                
+        except Exception as e:
+            print(f"[GRAD_CMP][ERROR] Comparison failed for layer {layer_id}: {e}", flush=True)
+        finally:
+            # Clean up to save memory
+            if layer_id in _GRAD_STORAGE:
+                del _GRAD_STORAGE[layer_id]
+
+
+def _cleanup_stale_gradients():
+    """Remove old gradient data to prevent memory buildup."""
+    if len(_GRAD_STORAGE) > 10:  # Keep only recent layers  
+        oldest_layers = sorted(_GRAD_STORAGE.keys())[:-5]
+        for layer_id in oldest_layers:
+            del _GRAD_STORAGE[layer_id]
 
 
 def _apply_packet_loss_(
@@ -593,6 +844,16 @@ def install_lossy_collectives(
     """
 
     import socket
+    
+    # Set global topology for gradient comparisons
+    global _CURRENT_NUM_NODES, _GPUS_PER_NODE
+    _CURRENT_NUM_NODES = num_nodes
+    _GPUS_PER_NODE = gpus_per_node
+    
+    # Set global topology for gradient comparisons
+    global _CURRENT_NUM_NODES, _GPUS_PER_NODE
+    _CURRENT_NUM_NODES = num_nodes
+    _GPUS_PER_NODE = gpus_per_node
 
     def _get_rank_world():
         if dist.is_available() and dist.is_initialized():
@@ -782,6 +1043,11 @@ def install_lossy_collectives(
             inject_here = (rank == input_rank) and is_target_layer
 
             try:
+                # Gradient comparison capture (before any modifications)
+                # Only capture from the target layer so comparisons are meaningful
+                if fn_name == "reduce_scatter_tensor" and _GRAD_COMPARISONS_ENABLED and is_target_layer:
+                    _capture_gradient_for_comparison(fn_name, t_in, rank, current_call_id)
+                
                 if inject_here:
                     if fn_name == "all_gather_into_tensor" and enable_allgather:
                         if _should_touch_tensor(t_in):
