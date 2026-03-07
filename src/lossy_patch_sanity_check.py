@@ -849,11 +849,6 @@ def install_lossy_collectives(
     global _CURRENT_NUM_NODES, _GPUS_PER_NODE
     _CURRENT_NUM_NODES = num_nodes
     _GPUS_PER_NODE = gpus_per_node
-    
-    # Set global topology for gradient comparisons
-    global _CURRENT_NUM_NODES, _GPUS_PER_NODE
-    _CURRENT_NUM_NODES = num_nodes
-    _GPUS_PER_NODE = gpus_per_node
 
     def _get_rank_world():
         if dist.is_available() and dist.is_initialized():
