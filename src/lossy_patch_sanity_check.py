@@ -35,6 +35,10 @@ _GRAD_COMPARISONS_ENABLED = os.environ.get("ENABLE_GRAD_COMPARISONS", "0") == "1
 _COMPARISON_LOG_PATH = os.path.join(_LOG_ROOT, f"{_RUN_ID}_gradient_comparisons.csv")
 _CURRENT_NUM_NODES = 1  # Will be set by install_lossy_collectives
 _GPUS_PER_NODE = 4  # Will be set by install_lossy_collectives
+# Which reduce_scatter_tensor call (0-based, per step) to capture for comparison.
+# Call 0 = first RS in the backward pass = last transformer layer's gradient.
+_GRAD_CMP_RS_ID = os.environ.get("GRAD_CMP_RS_ID", "0")
+_RS_CALL_COUNT = 0  # Counts only reduce_scatter_tensor calls; reset each step
 
 # ---- Per-layer-instance logging state -----------------------------------
 
@@ -56,8 +60,9 @@ _HIT_ONCE = {"all_gather_into_tensor": False,
 # --- Add this function to be called by your trainer ---
 def reset_lossy_counter():
     """Call this at the start of every training step/iteration."""
-    global _CURRENT_ITERATION_CALL_COUNT
+    global _CURRENT_ITERATION_CALL_COUNT, _RS_CALL_COUNT
     _CURRENT_ITERATION_CALL_COUNT = 0
+    _RS_CALL_COUNT = 0
     
 
 
@@ -838,6 +843,16 @@ def install_lossy_collectives(
     _CURRENT_NUM_NODES = num_nodes
     _GPUS_PER_NODE = gpus_per_node
 
+    # Confirm settings at startup (rank 0 only, falls back gracefully)
+    try:
+        _init_rank = dist.get_rank() if (dist.is_available() and dist.is_initialized()) else int(os.environ.get("RANK", "0"))
+    except Exception:
+        _init_rank = 0
+    if _init_rank == 0:
+        print(f"[GRAD_CMP] ENABLE_GRAD_COMPARISONS={_GRAD_COMPARISONS_ENABLED}  "
+              f"GRAD_CMP_RS_ID={_GRAD_CMP_RS_ID}  "
+              f"num_nodes={num_nodes}  log_root={_LOG_ROOT}", flush=True)
+
     def _get_rank_world():
         if dist.is_available() and dist.is_initialized():
             return dist.get_rank(), dist.get_world_size()
@@ -995,7 +1010,7 @@ def install_lossy_collectives(
         original = getattr(dist, fn_name)
 
         def wrapped(*args, **kwargs):
-            global _CURRENT_ITERATION_CALL_COUNT
+            global _CURRENT_ITERATION_CALL_COUNT, _RS_CALL_COUNT
             rank, world_size = _get_rank_world()
             gpn, node_id, input_rank = _logical_topology(rank, world_size, num_nodes)
             
@@ -1025,11 +1040,26 @@ def install_lossy_collectives(
             is_target_layer = (target_env is not None and str(current_call_id) == str(target_env))
             inject_here = (rank == input_rank) and is_target_layer
 
+            # Separate RS-only counter for gradient comparison.
+            # _CURRENT_ITERATION_CALL_COUNT mixes AG+RS+AR; reduce_scatter calls
+            # are only issued during the backward pass, so they get high sequential
+            # IDs that rarely match TARGET_LAYER_ID="2".  We fix this by tracking
+            # RS calls independently and using GRAD_CMP_RS_ID (default "0" = the
+            # first RS in each backward pass, i.e. the last transformer layer).
+            if fn_name == "reduce_scatter_tensor":
+                rs_call_id = _RS_CALL_COUNT
+                _RS_CALL_COUNT += 1
+                is_grad_cmp_layer = str(rs_call_id) == str(_GRAD_CMP_RS_ID)
+            else:
+                rs_call_id = -1
+                is_grad_cmp_layer = False
+
             try:
-                # Gradient comparison capture (before any modifications)
-                # Only capture from the target layer so comparisons are meaningful
-                if fn_name == "reduce_scatter_tensor" and _GRAD_COMPARISONS_ENABLED and is_target_layer:
-                    _capture_gradient_for_comparison(fn_name, t_in, rank, current_call_id)
+                # Gradient comparison capture (before any modifications).
+                # Uses the RS-specific counter so the ID is predictable regardless
+                # of how many AG/AR calls precede it.
+                if fn_name == "reduce_scatter_tensor" and _GRAD_COMPARISONS_ENABLED and is_grad_cmp_layer:
+                    _capture_gradient_for_comparison(fn_name, t_in, rank, rs_call_id)
                 
                 if inject_here:
                     if fn_name == "all_gather_into_tensor" and enable_allgather:
