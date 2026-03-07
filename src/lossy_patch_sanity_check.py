@@ -39,6 +39,10 @@ _GPUS_PER_NODE = 4  # Will be set by install_lossy_collectives
 # Call 0 = first RS in the backward pass = last transformer layer's gradient.
 _GRAD_CMP_RS_ID = os.environ.get("GRAD_CMP_RS_ID", "0")
 _RS_CALL_COUNT = 0  # Counts only reduce_scatter_tensor calls; reset each step
+# Number of gradient elements to sample per rank before gathering.
+# 4096 elements ≈ 8 KB per rank (vs. 100-200 MB for full grad), gives
+# statistically valid similarity estimates (error ≈ 1/√N ≈ 1.6%).
+_GRAD_SAMPLE_SIZE = int(os.environ.get("GRAD_SAMPLE_SIZE", "4096"))
 
 # ---- Per-layer-instance logging state -----------------------------------
 
@@ -477,11 +481,12 @@ def _write_comparison_results(results: list, path: str):
 
 def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: int, current_call_id: int):
     """
-    Gather gradients from ALL ranks to rank 0 using dist.all_gather,
-    then run the comparison on rank 0 only.
+    Sample a small slice of each rank's gradient and gather those tiny vectors
+    to rank 0 for comparison.  Sampling avoids OOM: full grad shards can be
+    100-200 MB each; 4096 elements are ~8 KB each (negligible allocation).
 
-    Each process is isolated — _GRAD_STORAGE is per-process — so we
-    must use a collective to bring all gradients together.
+    All ranks sample the SAME positions (first N elements of the flattened grad)
+    so comparisons between any pair of ranks are over corresponding elements.
     """
     if fn_name != "reduce_scatter_tensor" or not _GRAD_COMPARISONS_ENABLED:
         return
@@ -491,37 +496,23 @@ def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: i
             return
 
         world_size = dist.get_world_size()
-        local_grad = tensor.detach().clone().flatten()  # keep on GPU for all_gather
-        numel = local_grad.numel()
 
-        # Each rank may have a differently-sized flat grad (FSDP shards differ).
-        # Step 1: share the size from every rank so we can pad to the max.
-        size_t = torch.tensor([numel], dtype=torch.long, device=local_grad.device)
-        all_sizes = [torch.zeros(1, dtype=torch.long, device=local_grad.device)
-                     for _ in range(world_size)]
-        dist.all_gather(all_sizes, size_t)
-        max_size = int(max(s.item() for s in all_sizes))
+        # Sample first min(numel, _GRAD_SAMPLE_SIZE) elements — same slice on all ranks.
+        flat = tensor.detach().flatten()
+        sample_size = min(flat.numel(), _GRAD_SAMPLE_SIZE)
+        sampled = flat[:sample_size].contiguous()  # stays on GPU, tiny allocation
 
-        # Step 2: pad local grad to max_size
-        if numel < max_size:
-            pad = torch.zeros(max_size - numel, dtype=local_grad.dtype, device=local_grad.device)
-            padded = torch.cat([local_grad, pad])
-        else:
-            padded = local_grad
-
-        # Step 3: all_gather padded grads → every rank gets a list, but only rank 0 uses it
-        gathered = [torch.zeros(max_size, dtype=local_grad.dtype, device=local_grad.device)
+        # Gather the sampled slices from all ranks (total: world_size × sample_size)
+        gathered = [torch.zeros(sample_size, dtype=sampled.dtype, device=sampled.device)
                     for _ in range(world_size)]
-        dist.all_gather(gathered, padded)
+        dist.all_gather(gathered, sampled)
 
         # Only rank 0 runs the comparison and writes the CSV
         if rank != 0:
             return
 
-        # Trim padding and move to CPU
-        grad_dict = {}
-        for r, (g, sz) in enumerate(zip(gathered, all_sizes)):
-            grad_dict[r] = g[:int(sz.item())].cpu()
+        # Move to CPU for comparisons (tiny tensors, negligible cost)
+        grad_dict = {r: g.cpu() for r, g in enumerate(gathered)}
 
         try:
             global_step = int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
@@ -539,7 +530,7 @@ def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: i
         )
         path = os.path.join(_LOG_ROOT, fname)
         _write_comparison_results(results, path)
-        print(f"[GRAD_CMP] Written: {fname} ({len(results)} rows, {world_size} ranks)", flush=True)
+        print(f"[GRAD_CMP] Written: {fname} ({len(results)} rows, {world_size} ranks, sample={sample_size})", flush=True)
 
     except Exception as e:
         import traceback
