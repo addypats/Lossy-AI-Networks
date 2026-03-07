@@ -445,7 +445,7 @@ def _run_four_stage_comparisons(layer_id: int, grad_dict: dict):
 
 
 def _write_comparison_results(results: list, path: str):
-    """Write comparison results to a named CSV file (rank 0 only)."""
+    """Append comparison results to the single per-run CSV (rank 0 only)."""
     if not results:
         return
         
@@ -462,9 +462,9 @@ def _write_comparison_results(results: list, path: str):
         file_exists = os.path.exists(path)
         with open(path, "a", newline="") as f:
             fieldnames = [
-                "layer_id", "comparison_type", "rank1", "rank2", 
-                "server1", "server2", "cosine_similarity", 
-                "rel_magnitude_diff", "correlation", "num_comparisons", 
+                "global_step", "layer_id", "comparison_type", "rank1", "rank2",
+                "server1", "server2", "cosine_similarity",
+                "rel_magnitude_diff", "correlation", "num_comparisons",
                 "num_nodes", "error"
             ]
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -521,16 +521,20 @@ def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: i
 
         results = _run_four_stage_comparisons(current_call_id, grad_dict)
 
+        # Stamp every result row with the current step so we can plot over time
+        for r in results:
+            r["global_step"] = global_step
+
+        # One file per run — step is now a column, not part of the filename
         fname = (
             f"{_RUN_ID}_gradcmp"
             f"_layer{current_call_id}"
             f"_nodes{_CURRENT_NUM_NODES}"
-            f"_step{global_step}"
             f".csv"
         )
         path = os.path.join(_LOG_ROOT, fname)
         _write_comparison_results(results, path)
-        print(f"[GRAD_CMP] Written: {fname} ({len(results)} rows, {world_size} ranks, sample={sample_size})", flush=True)
+        print(f"[GRAD_CMP] step={global_step} -> {fname} (+{len(results)} rows, {world_size} ranks, sample={sample_size})", flush=True)
 
     except Exception as e:
         import traceback
