@@ -43,6 +43,11 @@ _RS_CALL_COUNT = 0  # Counts only reduce_scatter_tensor calls; reset each step
 # 4096 elements ≈ 8 KB per rank (vs. 100-200 MB for full grad), gives
 # statistically valid similarity estimates (error ≈ 1/√N ≈ 1.6%).
 _GRAD_SAMPLE_SIZE = int(os.environ.get("GRAD_SAMPLE_SIZE", "4096"))
+# Human-readable label for the captured layer (set in your bash script).
+# Helps distinguish e.g. "layer22" from "layer0" in the CSV filename.
+_GRAD_CMP_LAYER_NAME = os.environ.get("GRAD_CMP_LAYER_NAME", "rs0")
+# Per-device batch size — embedded in filename for easy comparison across runs.
+_GRAD_CMP_BATCH_SIZE = os.environ.get("GRAD_CMP_BATCH_SIZE", "")
 
 # ---- Per-layer-instance logging state -----------------------------------
 
@@ -498,12 +503,14 @@ def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: i
         world_size = dist.get_world_size()
 
         # Sample first min(numel, _GRAD_SAMPLE_SIZE) elements — same slice on all ranks.
-        flat = tensor.detach().flatten()
+        # Cast to float32 first: fp16 training can produce very small gradient values
+        # that underflow to exactly 0.0 in fp16, making norm=0 and cosine sim=NaN.
+        flat = tensor.detach().float().flatten()  # float32, stays on GPU
         sample_size = min(flat.numel(), _GRAD_SAMPLE_SIZE)
-        sampled = flat[:sample_size].contiguous()  # stays on GPU, tiny allocation
+        sampled = flat[:sample_size].contiguous()
 
         # Gather the sampled slices from all ranks (total: world_size × sample_size)
-        gathered = [torch.zeros(sample_size, dtype=sampled.dtype, device=sampled.device)
+        gathered = [torch.zeros(sample_size, dtype=torch.float32, device=sampled.device)
                     for _ in range(world_size)]
         dist.all_gather(gathered, sampled)
 
@@ -525,10 +532,13 @@ def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: i
         for r in results:
             r["global_step"] = global_step
 
-        # One file per run — step is now a column, not part of the filename
+        # One file per run — step is now a column, not part of the filename.
+        target_layer = os.environ.get("TARGET_LAYER_ID", "unknown")
+        bs_part = f"_bs{_GRAD_CMP_BATCH_SIZE}" if _GRAD_CMP_BATCH_SIZE else ""
         fname = (
             f"{_RUN_ID}_gradcmp"
-            f"_layer{current_call_id}"
+            f"_layer{target_layer}"
+            f"{bs_part}"
             f"_nodes{_CURRENT_NUM_NODES}"
             f".csv"
         )

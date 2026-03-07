@@ -59,6 +59,10 @@ export TARGET_LAYER_ID="2"
 
 # Enable gradient similarity comparisons across GPUs for the target layer
 export ENABLE_GRAD_COMPARISONS=1
+# Human-readable label for the captured RS call (shown in CSV filename).
+# GRAD_CMP_RS_ID=0 = first RS in the backward pass = last transformer layer.
+export GRAD_CMP_LAYER_NAME="last_transformer_layer"
+export GRAD_CMP_BATCH_SIZE="${PER_DEVICE_BS}"
 # export TARGET_LAYER_ID="21"
 
 

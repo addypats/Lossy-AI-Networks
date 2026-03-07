@@ -60,6 +60,8 @@ export TARGET_LAYER_ID="2"
 
 # Enable gradient similarity comparisons across GPUs for the target layer
 export ENABLE_GRAD_COMPARISONS=1
+export GRAD_CMP_LAYER_NAME="last_transformer_layer"
+export GRAD_CMP_BATCH_SIZE="${PER_DEVICE_BS}"
 
 # Logging Directory
 export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs
