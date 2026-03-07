@@ -67,7 +67,7 @@ export NCCL_ALGO=Ring
 # Args for dist training
 export MASTER_ADDR=172.31.0.173     # Node 0 private IP
 export MASTER_PORT=29500
-export NNODES=3
+export NNODES=4
 # export NPROC_PER_NODE=4
 
 export NCCL_SOCKET_IFNAME=enp39s0   # same as above
@@ -201,8 +201,6 @@ for config in "${CONFIGS_DET[@]}"; do
         --output_dir "$output_dir" \
               --eval_steps 20 \
         --loss-enable-ag \
-        --loss-enable-ar \
-        --loss-enable-rs \
         --loss_type "det" \
         --det_config "$config" \
         --num_nodes "${NNODES}" \
