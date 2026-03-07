@@ -57,6 +57,9 @@ export WANDB_PROJECT="lossy_dist_fsdp_study"
 export TARGET_LAYER_ID="2"
 # export TARGET_LAYER_ID="21"
 
+# Enable gradient similarity comparisons across GPUs for the target layer
+export ENABLE_GRAD_COMPARISONS=1
+
 
 # Logging Directory
 export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs

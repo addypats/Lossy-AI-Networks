@@ -32,10 +32,7 @@ _CURRENT_ITERATION_CALL_COUNT = 0
 
 # ---- Gradient Comparison Globals ----------------------------------------
 _GRAD_COMPARISONS_ENABLED = os.environ.get("ENABLE_GRAD_COMPARISONS", "0") == "1"
-_GRAD_STORAGE = {}  # {layer_id: {rank: tensor_data}}
 _COMPARISON_LOG_PATH = os.path.join(_LOG_ROOT, f"{_RUN_ID}_gradient_comparisons.csv")
-_GRAD_TIMEOUT_STEPS = 5  # Clean up gradients after this many steps without full collection
-_GRAD_CLEANUP_COUNTER = 0
 _CURRENT_NUM_NODES = 1  # Will be set by install_lossy_collectives
 _GPUS_PER_NODE = 4  # Will be set by install_lossy_collectives
 
@@ -59,13 +56,8 @@ _HIT_ONCE = {"all_gather_into_tensor": False,
 # --- Add this function to be called by your trainer ---
 def reset_lossy_counter():
     """Call this at the start of every training step/iteration."""
-    global _CURRENT_ITERATION_CALL_COUNT, _GRAD_CLEANUP_COUNTER
+    global _CURRENT_ITERATION_CALL_COUNT
     _CURRENT_ITERATION_CALL_COUNT = 0
-    
-    # Periodic cleanup of gradient storage
-    _GRAD_CLEANUP_COUNTER += 1
-    if _GRAD_CLEANUP_COUNTER % _GRAD_TIMEOUT_STEPS == 0:
-        _cleanup_stale_gradients()
     
 
 
@@ -479,79 +471,75 @@ def _write_comparison_results(results: list, path: str):
 
 
 def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: int, current_call_id: int):
-    """Capture complete gradient tensor before reduce_scatter."""
+    """
+    Gather gradients from ALL ranks to rank 0 using dist.all_gather,
+    then run the comparison on rank 0 only.
+
+    Each process is isolated — _GRAD_STORAGE is per-process — so we
+    must use a collective to bring all gradients together.
+    """
     if fn_name != "reduce_scatter_tensor" or not _GRAD_COMPARISONS_ENABLED:
         return
-        
+
     try:
-        # Store flattened gradient copy (move to CPU to avoid GPU memory issues)
-        grad_flat = tensor.detach().clone().flatten().cpu()
-        
-        # Use call_id as layer identifier
-        if current_call_id not in _GRAD_STORAGE:
-            _GRAD_STORAGE[current_call_id] = {}
-        
-        _GRAD_STORAGE[current_call_id][rank] = grad_flat
-        
-        # Trigger comparison when we have enough ranks
-        _maybe_run_comparisons(current_call_id)
-        
-    except Exception as e:
-        print(f"[GRAD_CMP][ERROR] rank={rank} layer={current_call_id}: {e}", flush=True)
+        if not (dist.is_available() and dist.is_initialized()):
+            return
 
+        world_size = dist.get_world_size()
+        local_grad = tensor.detach().clone().flatten()  # keep on GPU for all_gather
+        numel = local_grad.numel()
 
-def _maybe_run_comparisons(layer_id: int):
-    """Run comparisons when enough ranks have reported."""
-    if layer_id not in _GRAD_STORAGE:
-        return
-        
-    rank_count = len(_GRAD_STORAGE[layer_id])
-    
-    # Dynamic minimum based on number of nodes (at least 1 rank per node, minimum 2 total)
-    min_ranks = max(2, min(_CURRENT_NUM_NODES, rank_count))
-    
-    if rank_count >= min_ranks:
+        # Each rank may have a differently-sized flat grad (FSDP shards differ).
+        # Step 1: share the size from every rank so we can pad to the max.
+        size_t = torch.tensor([numel], dtype=torch.long, device=local_grad.device)
+        all_sizes = [torch.zeros(1, dtype=torch.long, device=local_grad.device)
+                     for _ in range(world_size)]
+        dist.all_gather(all_sizes, size_t)
+        max_size = int(max(s.item() for s in all_sizes))
+
+        # Step 2: pad local grad to max_size
+        if numel < max_size:
+            pad = torch.zeros(max_size - numel, dtype=local_grad.dtype, device=local_grad.device)
+            padded = torch.cat([local_grad, pad])
+        else:
+            padded = local_grad
+
+        # Step 3: all_gather padded grads → every rank gets a list, but only rank 0 uses it
+        gathered = [torch.zeros(max_size, dtype=local_grad.dtype, device=local_grad.device)
+                    for _ in range(world_size)]
+        dist.all_gather(gathered, padded)
+
+        # Only rank 0 runs the comparison and writes the CSV
+        if rank != 0:
+            return
+
+        # Trim padding and move to CPU
+        grad_dict = {}
+        for r, (g, sz) in enumerate(zip(gathered, all_sizes)):
+            grad_dict[r] = g[:int(sz.item())].cpu()
+
         try:
-            results = _run_four_stage_comparisons(layer_id, _GRAD_STORAGE[layer_id])
-            
-            # Build a unique filename per capture:
-            # {RUN_ID}_gradcmp_layer{layer_id}_nodes{num_nodes}_step{global_step}.csv
-            try:
-                global_step = int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
-            except Exception:
-                global_step = 0
-            fname = (
-                f"{_RUN_ID}_gradcmp"
-                f"_layer{layer_id}"
-                f"_nodes{_CURRENT_NUM_NODES}"
-                f"_step{global_step}"
-                f".csv"
-            )
-            path = os.path.join(_LOG_ROOT, fname)
-            _write_comparison_results(results, path)
-            
-            # Debug print (rank 0 only)
-            try:
-                rank = int(os.environ.get("RANK", "0"))
-                if rank == 0:
-                    print(f"[GRAD_CMP] Written: {fname} ({len(results)} rows, {rank_count} ranks)", flush=True)
-            except Exception:
-                pass
-                
-        except Exception as e:
-            print(f"[GRAD_CMP][ERROR] Comparison failed for layer {layer_id}: {e}", flush=True)
-        finally:
-            # Clean up to save memory
-            if layer_id in _GRAD_STORAGE:
-                del _GRAD_STORAGE[layer_id]
+            global_step = int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
+        except Exception:
+            global_step = 0
 
+        results = _run_four_stage_comparisons(current_call_id, grad_dict)
 
-def _cleanup_stale_gradients():
-    """Remove old gradient data to prevent memory buildup."""
-    if len(_GRAD_STORAGE) > 10:  # Keep only recent layers  
-        oldest_layers = sorted(_GRAD_STORAGE.keys())[:-5]
-        for layer_id in oldest_layers:
-            del _GRAD_STORAGE[layer_id]
+        fname = (
+            f"{_RUN_ID}_gradcmp"
+            f"_layer{current_call_id}"
+            f"_nodes{_CURRENT_NUM_NODES}"
+            f"_step{global_step}"
+            f".csv"
+        )
+        path = os.path.join(_LOG_ROOT, fname)
+        _write_comparison_results(results, path)
+        print(f"[GRAD_CMP] Written: {fname} ({len(results)} rows, {world_size} ranks)", flush=True)
+
+    except Exception as e:
+        import traceback
+        print(f"[GRAD_CMP][ERROR] rank={rank} layer={current_call_id}: {e}", flush=True)
+        traceback.print_exc()
 
 
 def _apply_packet_loss_(
