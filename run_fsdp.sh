@@ -10,8 +10,8 @@ MODEL_ALIAS="TinyLlama"
 # MODEL="openlm-research/open_llama_7b"
 # MODEL="huggyllama/llama-7b"
 # MODEL_ALIAS="openlm-LlaMa"
-# DATASET="piqa"
-DATASET="squad"
+DATASET="piqa"
+# DATASET="squad"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
 LOSS_RATES=()
@@ -28,11 +28,20 @@ SEEDS=(10)
 
 # GPUs on this machine (e.g., 4 GPUs)
 # GPUS_LIST=(1 2 4)
-GPUS_LIST=(8)
+GPUS_LIST=(4)
 #SEEDS=(1 2 3)
 
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
-PER_DEVICE_BS=8
+# PER_DEVICE_BS=8
+
+PER_DEVICE_BS=2
+# PER_DEVICE_BS=16
+
+
+export ENABLE_GRAD_COMPARISONS=1
+export GRAD_CMP_BATCH_SIZE="${PER_DEVICE_BS}"
+
+
 LR=1e-5
 #EPOCHS=1
 #EVAL_STEPS=50
@@ -50,20 +59,22 @@ CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
 
 # GPU settings
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export WANDB_PROJECT="lossy_net_fsdp_study"
 
-# export NNODES=1
+export NNODES=1
 # export NNODES=2
 # export NNODES=4
-export NNODES=8
+# export NNODES=8
 
 # NNODES=(4 8)
 
 # Target loss on a specific layer
 # Set this to the ID of the layer you want to sabotage. 
 # Check your CSV log from a previous run to find the exact ID.
-export TARGET_LAYER_ID="3"
+# export TARGET_LAYER_ID="2"
+export TARGET_LAYER_ID="21"
+
 
 # Logging Directory
 export SANITY_CHECK_LOGS=/home/ubuntu/Lossy-AI-Networks/sanity_check_logs
