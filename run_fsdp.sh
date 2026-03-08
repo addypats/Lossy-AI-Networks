@@ -102,7 +102,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
       # Make run_id visible to Python code (lossy_patch.py)
       export RUN_ID="${run_id}"
 
-      TORCH_LOGS="+fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
+      TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
       torchrun --nproc_per_node="${gpus}" src/main_fsdp.py \
         --model_name "${MODEL}" \
         --dataset "${DATASET}" \
@@ -141,7 +141,7 @@ for config in "${CONFIGS[@]}"; do
       # Make run_id visible to Python code (lossy_patch.py)
       export RUN_ID="${run_id}"
 
-      TORCH_LOGS="+fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
+      TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
       torchrun --nproc_per_node="${gpus}" src/main_fsdp.py \
         --model_name "${MODEL}" \
         --dataset "${DATASET}" \
@@ -182,7 +182,7 @@ for config in "${CONFIGS_DET[@]}"; do
       # Make run_id visible to Python code (lossy_patch.py)
       export RUN_ID="${run_id}"
 
-      TORCH_LOGS="+fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
+      TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
       torchrun --nproc_per_node="${gpus}" src/main_fsdp.py \
         --model_name "$MODEL" \
         --dataset "$DATASET" \
