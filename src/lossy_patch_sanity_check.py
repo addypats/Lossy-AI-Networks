@@ -1043,7 +1043,8 @@ def install_lossy_collectives(
             # 3. Target logic (only reached by large tensors)
             target_env = os.environ.get("TARGET_LAYER_ID")
             is_target_layer = (target_env is not None and str(current_call_id) == str(target_env))
-            inject_here = (rank == input_rank) and is_target_layer
+            # inject_here = (rank == input_rank) and is_target_layer
+            inject_here = (num_nodes > 1) and (rank == input_rank) and is_target_layer
 
             # Separate RS-only counter for gradient comparison.
             # _CURRENT_ITERATION_CALL_COUNT mixes AG+RS+AR; reduce_scatter calls
