@@ -1093,7 +1093,10 @@ def install_lossy_collectives(
             # _CURRENT_ITERATION_CALL_COUNT mixes AG+RS+AR; RS calls happen only
             # during the backward pass in reverse layer order (rs_call_id=0 = last
             # transformer layer, rs_call_id=21 = first transformer layer).
-            if fn_name == "reduce_scatter_tensor":
+            # _reduce_scatter_base is FSDP's private alias for reduce_scatter_tensor;
+            # we treat them identically so both code paths are counted/captured.
+            is_rs = fn_name in ("reduce_scatter_tensor", "_reduce_scatter_base")
+            if is_rs:
                 rs_call_id = _RS_CALL_COUNT
                 _RS_CALL_COUNT += 1
             else:
@@ -1101,7 +1104,7 @@ def install_lossy_collectives(
 
             try:
                 # Capture gradients for ALL RS calls — one CSV file per layer per run.
-                if fn_name == "reduce_scatter_tensor" and _GRAD_COMPARISONS_ENABLED:
+                if is_rs and _GRAD_COMPARISONS_ENABLED:
                     _capture_gradient_for_comparison(fn_name, t_in, rank, rs_call_id)
 
                 if inject_here:
@@ -1110,7 +1113,7 @@ def install_lossy_collectives(
                             stats = _apply_packet_loss_(t_in, loss, tag="ag.target")
                             _record_packets_instance(fn_name, t_in, stats, enable_allgather=enable_allgather)
 
-                    elif fn_name == "reduce_scatter_tensor" and enable_rs:
+                    elif is_rs and enable_rs:
                         if _should_touch_tensor(t_in):
                             stats = _apply_packet_loss_(t_in, loss, tag="rs.target")
                             _record_packets_instance(fn_name, t_in, stats, enable_allgather=enable_allgather)
@@ -1124,8 +1127,10 @@ def install_lossy_collectives(
 
         return wrapped
 
-    # Patch the collectives you use
-    for name in ("all_gather_into_tensor", "reduce_scatter_tensor", "all_reduce"):
+    # Patch the collectives you use.
+    # _reduce_scatter_base is FSDP's private alias for reduce_scatter_tensor in
+    # some PyTorch versions — patch it too so we never miss a layer's RS call.
+    for name in ("all_gather_into_tensor", "reduce_scatter_tensor", "_reduce_scatter_base", "all_reduce"):
         if hasattr(dist, name):
             setattr(dist, name, _wrap(name))
 
