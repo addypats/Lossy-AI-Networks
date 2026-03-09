@@ -25,13 +25,24 @@ generation_datasets = ['hotpotqa', 'squad', 'tinysquad', 'newsqa', 'triviaqa']
 
 
 class LossyStepBump(TrainerCallback):
+    def __init__(self, lossy=None, num_nodes: int = 1, gpus_per_node: int = 4):
+        super().__init__()
+        self.lossy = lossy
+        self.num_nodes = num_nodes
+        self.gpus_per_node = gpus_per_node
+
     def on_train_begin(self, args, state, control, **kwargs):
         # FSDP wrapping has already happened by on_train_begin, so we can
         # safely walk the model and register per-layer backward hooks.
         model = kwargs.get("model", None)
         if model is not None:
             from lossy_patch_sanity_check import install_grad_comparison_hooks
-            install_grad_comparison_hooks(model)
+            install_grad_comparison_hooks(
+                model,
+                loss=self.lossy,
+                num_nodes=self.num_nodes,
+                gpus_per_node=self.gpus_per_node,
+            )
 
     def on_step_begin(self, args, state, control, **kwargs):
         # HF keeps state.global_step consistent across ranks.
@@ -385,7 +396,7 @@ def main(args):
         args = training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        callbacks=[callback, LossyStepBump()],
+        callbacks=[callback, LossyStepBump(lossy=lossy, num_nodes=args.num_nodes, gpus_per_node=args.gpus_per_node)],
         compute_metrics=compute_metrics,
     )
 
