@@ -49,6 +49,11 @@ _GRAD_CMP_LAYER_NAME = os.environ.get("GRAD_CMP_LAYER_NAME", "rs0")
 # Per-device batch size — embedded in filename for easy comparison across runs.
 _GRAD_CMP_BATCH_SIZE = os.environ.get("GRAD_CMP_BATCH_SIZE", "")
 
+# Buffer for gradient samples collected during the backward pass.
+# Keys: rs_call_id (int)  Values: (sampled_cpu_tensor, global_step)
+# Populated during RS calls (no collective), flushed at step boundaries.
+_GRAD_CMP_BUFFER: dict = {}
+
 # ---- Per-layer-instance logging state -----------------------------------
 
 # We treat each (global_elems, dtype, occurrence_index) as a distinct "layer instance".
@@ -69,6 +74,11 @@ _HIT_ONCE = {"all_gather_into_tensor": False,
 # --- Add this function to be called by your trainer ---
 def reset_lossy_counter():
     """Call this at the start of every training step/iteration."""
+    # Flush previous step's buffered gradient samples before resetting counters.
+    # All collectives here happen between steps so NCCL ordering is safe.
+    if _GRAD_COMPARISONS_ENABLED and _GRAD_CMP_BUFFER:
+        _flush_grad_comparisons()
+
     global _CURRENT_ITERATION_CALL_COUNT, _RS_CALL_COUNT
     _CURRENT_ITERATION_CALL_COUNT = 0
     _RS_CALL_COUNT = 0
@@ -486,73 +496,96 @@ def _write_comparison_results(results: list, path: str):
 
 def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: int, current_call_id: int):
     """
-    Sample a small slice of each rank's gradient and gather those tiny vectors
-    to rank 0 for comparison.  Sampling avoids OOM: full grad shards can be
-    100-200 MB each; 4096 elements are ~8 KB each (negligible allocation).
+    Buffer a small CPU copy of this rank's gradient sample for later comparison.
 
-    All ranks sample the SAME positions (first N elements of the flattened grad)
-    so comparisons between any pair of ranks are over corresponding elements.
+    No collective is issued here — calling dist.all_gather inside the RS wrapper
+    for every layer creates NCCL ordering conflicts that silently drop all but the
+    first layer.  Instead, all ranks buffer their samples to CPU during the backward
+    pass, and _flush_grad_comparisons() does the all_gathers between steps when
+    NCCL is idle.
     """
     if fn_name != "reduce_scatter_tensor" or not _GRAD_COMPARISONS_ENABLED:
         return
 
     try:
-        if not (dist.is_available() and dist.is_initialized()):
-            return
-
-        world_size = dist.get_world_size()
-
-        # Sample first min(numel, _GRAD_SAMPLE_SIZE) elements — same slice on all ranks.
-        # Cast to float32 first: fp16 training can produce very small gradient values
-        # that underflow to exactly 0.0 in fp16, making norm=0 and cosine sim=NaN.
-        flat = tensor.detach().float().flatten()  # float32, stays on GPU
+        # Cast to float32: fp16 underflow can produce all-zero vectors → NaN cosine sim.
+        flat = tensor.detach().float().flatten()
         sample_size = min(flat.numel(), _GRAD_SAMPLE_SIZE)
-        sampled = flat[:sample_size].contiguous()
-
-        # Gather the sampled slices from all ranks (total: world_size × sample_size)
-        gathered = [torch.zeros(sample_size, dtype=torch.float32, device=sampled.device)
-                    for _ in range(world_size)]
-        dist.all_gather(gathered, sampled)
-
-        # Only rank 0 runs the comparison and writes the CSV
-        if rank != 0:
-            return
-
-        # Move to CPU for comparisons (tiny tensors, negligible cost)
-        grad_dict = {r: g.cpu() for r, g in enumerate(gathered)}
+        # Move to CPU immediately so we hold no extra GPU memory between steps.
+        sampled_cpu = flat[:sample_size].contiguous().cpu()
 
         try:
             global_step = int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
         except Exception:
             global_step = 0
 
-        results = _run_four_stage_comparisons(current_call_id, grad_dict)
-
-        # Stamp every result row with the current step so we can plot over time
-        for r in results:
-            r["global_step"] = global_step
-
-        # Folder per run, one CSV per layer inside it.
-        # Folder: {LOG_ROOT}/{RUN_ID}_gradcmp_bs{BS}_nodes{N}/
-        # File:   layer{rs_call_id}.csv
-        # rs_call_id=0 = last transformer layer (first RS in backward pass).
-        bs_part = f"_bs{_GRAD_CMP_BATCH_SIZE}" if _GRAD_CMP_BATCH_SIZE else ""
-        run_folder = (
-            f"{_RUN_ID}_gradcmp"
-            f"{bs_part}"
-            f"_nodes{_CURRENT_NUM_NODES}"
-        )
-        folder_path = os.path.join(_LOG_ROOT, run_folder)
-        os.makedirs(folder_path, exist_ok=True)
-        fname = f"layer{current_call_id}.csv"
-        path = os.path.join(folder_path, fname)
-        _write_comparison_results(results, path)
-        print(f"[GRAD_CMP] step={global_step} -> {run_folder}/{fname} (+{len(results)} rows, {world_size} ranks, sample={sample_size})", flush=True)
+        _GRAD_CMP_BUFFER[current_call_id] = (sampled_cpu, global_step)
 
     except Exception as e:
         import traceback
-        print(f"[GRAD_CMP][ERROR] rank={rank} layer={current_call_id}: {e}", flush=True)
+        print(f"[GRAD_CMP][BUFFER][ERROR] rank={rank} layer={current_call_id}: {e}", flush=True)
         traceback.print_exc()
+
+
+def _flush_grad_comparisons():
+    """
+    Called at the start of each new training step (from reset_lossy_counter).
+    Processes the previous step's buffered gradient samples:
+      - All ranks do dist.all_gather for each buffered layer (safe: between steps)
+      - Rank 0 runs comparisons and appends to per-layer CSVs
+    """
+    global _GRAD_CMP_BUFFER
+
+    if not _GRAD_CMP_BUFFER:
+        return
+    if not (dist.is_available() and dist.is_initialized()):
+        _GRAD_CMP_BUFFER.clear()
+        return
+
+    try:
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+    except Exception:
+        _GRAD_CMP_BUFFER.clear()
+        return
+
+    bs_part = f"_bs{_GRAD_CMP_BATCH_SIZE}" if _GRAD_CMP_BATCH_SIZE else ""
+    run_folder = f"{_RUN_ID}_gradcmp{bs_part}_nodes{_CURRENT_NUM_NODES}"
+    folder_path = os.path.join(_LOG_ROOT, run_folder)
+
+    for rs_call_id in sorted(_GRAD_CMP_BUFFER.keys()):
+        sampled_cpu, global_step = _GRAD_CMP_BUFFER[rs_call_id]
+        try:
+            sample_size = sampled_cpu.numel()
+            # Move back to GPU only for the collective, then immediately free.
+            sampled_gpu = sampled_cpu.cuda()
+            gathered = [
+                torch.zeros(sample_size, dtype=torch.float32, device=sampled_gpu.device)
+                for _ in range(world_size)
+            ]
+            dist.all_gather(gathered, sampled_gpu)
+            del sampled_gpu  # free GPU memory immediately
+
+            # Only rank 0 runs comparisons and writes.
+            if rank != 0:
+                continue
+
+            grad_dict = {r: g.cpu() for r, g in enumerate(gathered)}
+            results = _run_four_stage_comparisons(rs_call_id, grad_dict)
+            for r in results:
+                r["global_step"] = global_step
+
+            os.makedirs(folder_path, exist_ok=True)
+            path = os.path.join(folder_path, f"layer{rs_call_id}.csv")
+            _write_comparison_results(results, path)
+            print(f"[GRAD_CMP] step={global_step} layer={rs_call_id} -> {run_folder}/layer{rs_call_id}.csv (+{len(results)} rows)", flush=True)
+
+        except Exception as e:
+            import traceback
+            print(f"[GRAD_CMP][FLUSH][ERROR] rank={rank} layer={rs_call_id}: {e}", flush=True)
+            traceback.print_exc()
+
+    _GRAD_CMP_BUFFER.clear()
 
 
 def _apply_packet_loss_(
