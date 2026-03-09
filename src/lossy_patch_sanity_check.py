@@ -74,6 +74,7 @@ _HIT_ONCE = {"all_gather_into_tensor": False,
 # --- Add this function to be called by your trainer ---
 def reset_lossy_counter():
     """Call this at the start of every training step/iteration."""
+    global _CURRENT_ITERATION_CALL_COUNT, _RS_CALL_COUNT
     # Flush previous step's buffered gradient samples before resetting counters.
     # All collectives here happen between steps so NCCL ordering is safe.
     if _GRAD_COMPARISONS_ENABLED:
@@ -89,7 +90,6 @@ def reset_lossy_counter():
         if _GRAD_CMP_BUFFER:
             _flush_grad_comparisons()
 
-    global _CURRENT_ITERATION_CALL_COUNT, _RS_CALL_COUNT
     _CURRENT_ITERATION_CALL_COUNT = 0
     _RS_CALL_COUNT = 0
     
