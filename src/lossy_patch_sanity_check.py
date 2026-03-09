@@ -86,11 +86,6 @@ def reset_lossy_counter():
             rank = dist.get_rank() if (dist.is_available() and dist.is_initialized()) else 0
         except Exception:
             rank = 0
-        # _RS_CALL_COUNT at this point = number of RS calls in the last backward pass.
-        # Buffer size = number of layers successfully buffered.
-        if rank == 0:
-            print(f"[GRAD_CMP][DIAG] RS calls last step={_RS_CALL_COUNT}, "
-                  f"buffer keys={sorted(_GRAD_CMP_BUFFER.keys())}", flush=True)
         if _GRAD_CMP_BUFFER:
             _flush_grad_comparisons()
 
