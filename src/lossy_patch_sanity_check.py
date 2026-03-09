@@ -532,19 +532,22 @@ def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: i
         for r in results:
             r["global_step"] = global_step
 
-        # One file per run — step is now a column, not part of the filename.
-        target_layer = os.environ.get("TARGET_LAYER_ID", "unknown")
+        # Folder per run, one CSV per layer inside it.
+        # Folder: {LOG_ROOT}/{RUN_ID}_gradcmp_bs{BS}_nodes{N}/
+        # File:   layer{rs_call_id}.csv
+        # rs_call_id=0 = last transformer layer (first RS in backward pass).
         bs_part = f"_bs{_GRAD_CMP_BATCH_SIZE}" if _GRAD_CMP_BATCH_SIZE else ""
-        fname = (
+        run_folder = (
             f"{_RUN_ID}_gradcmp"
-            f"_layer{target_layer}"
             f"{bs_part}"
             f"_nodes{_CURRENT_NUM_NODES}"
-            f".csv"
         )
-        path = os.path.join(_LOG_ROOT, fname)
+        folder_path = os.path.join(_LOG_ROOT, run_folder)
+        os.makedirs(folder_path, exist_ok=True)
+        fname = f"layer{current_call_id}.csv"
+        path = os.path.join(folder_path, fname)
         _write_comparison_results(results, path)
-        print(f"[GRAD_CMP] step={global_step} -> {fname} (+{len(results)} rows, {world_size} ranks, sample={sample_size})", flush=True)
+        print(f"[GRAD_CMP] step={global_step} -> {run_folder}/{fname} (+{len(results)} rows, {world_size} ranks, sample={sample_size})", flush=True)
 
     except Exception as e:
         import traceback
@@ -1040,33 +1043,24 @@ def install_lossy_collectives(
                 # We run the original NCCL op and RETURN IMMEDIATELY.
                 return original(*args, **kwargs)
 
-            # 3. Target logic (only reached by large tensors)
-            target_env = os.environ.get("TARGET_LAYER_ID")
-            is_target_layer = (target_env is not None and str(current_call_id) == str(target_env))
-            # inject_here = (rank == input_rank) and is_target_layer
-            inject_here = (num_nodes > 1) and (rank == input_rank) and is_target_layer
+            # 3. Inject loss on all layers (boundary rank of each node injects on every RS/AG)
+            inject_here = (num_nodes > 1) and (rank == input_rank)
 
             # Separate RS-only counter for gradient comparison.
-            # _CURRENT_ITERATION_CALL_COUNT mixes AG+RS+AR; reduce_scatter calls
-            # are only issued during the backward pass, so they get high sequential
-            # IDs that rarely match TARGET_LAYER_ID="2".  We fix this by tracking
-            # RS calls independently and using GRAD_CMP_RS_ID (default "0" = the
-            # first RS in each backward pass, i.e. the last transformer layer).
+            # _CURRENT_ITERATION_CALL_COUNT mixes AG+RS+AR; RS calls happen only
+            # during the backward pass in reverse layer order (rs_call_id=0 = last
+            # transformer layer, rs_call_id=21 = first transformer layer).
             if fn_name == "reduce_scatter_tensor":
                 rs_call_id = _RS_CALL_COUNT
                 _RS_CALL_COUNT += 1
-                is_grad_cmp_layer = str(rs_call_id) == str(_GRAD_CMP_RS_ID)
             else:
                 rs_call_id = -1
-                is_grad_cmp_layer = False
 
             try:
-                # Gradient comparison capture (before any modifications).
-                # Uses the RS-specific counter so the ID is predictable regardless
-                # of how many AG/AR calls precede it.
-                if fn_name == "reduce_scatter_tensor" and _GRAD_COMPARISONS_ENABLED and is_grad_cmp_layer:
+                # Capture gradients for ALL RS calls — one CSV file per layer per run.
+                if fn_name == "reduce_scatter_tensor" and _GRAD_COMPARISONS_ENABLED:
                     _capture_gradient_for_comparison(fn_name, t_in, rank, rs_call_id)
-                
+
                 if inject_here:
                     if fn_name == "all_gather_into_tensor" and enable_allgather:
                         if _should_touch_tensor(t_in):
@@ -1080,7 +1074,7 @@ def install_lossy_collectives(
 
             except Exception as e:
                 import traceback
-                print(f"[LOSSY][ERROR] rank={rank} target={target_env}: {e}")
+                print(f"[LOSSY][ERROR] rank={rank} fn={fn_name}: {e}")
                 traceback.print_exc()
 
             return original(*args, **kwargs)

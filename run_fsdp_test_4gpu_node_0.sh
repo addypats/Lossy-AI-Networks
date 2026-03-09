@@ -28,8 +28,8 @@ GPUS_LIST=(4)
 
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
 
-PER_DEVICE_BS=2
-# PER_DEVICE_BS=16
+# PER_DEVICE_BS=2
+PER_DEVICE_BS=16
 
 LR=1e-5
 #EPOCHS=1
@@ -42,31 +42,20 @@ CONFIGS=()
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3")
-# CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
+CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.4")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.3")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
-CONFIGS_DET=("high_persistence_low_intensity_1")
+# CONFIGS_DET=("high_persistence_low_intensity_1")
 
 # GPU settings
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 export WANDB_PROJECT="lossy_dist_fsdp_study"
 
-# Target loss on a specific layer
-# Set this to the ID of the layer you want to sabotage. 
-# Check your CSV log from a previous run to find the exact ID.
-export TARGET_LAYER_ID="2"
-# export TARGET_LAYER_ID="21"
-
-
-# Enable gradient similarity comparisons across GPUs for the target layer
+# Gradient comparison across all layers — one CSV per RS layer per run
 export ENABLE_GRAD_COMPARISONS=1
-# Human-readable label for the captured RS call (shown in CSV filename).
-# GRAD_CMP_RS_ID=0 = first RS in the backward pass = last transformer layer.
-export GRAD_CMP_LAYER_NAME="last_transformer_layer"
 export GRAD_CMP_BATCH_SIZE="${PER_DEVICE_BS}"
-# export TARGET_LAYER_ID="21"
 
 
 # Logging Directory
