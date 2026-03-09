@@ -76,8 +76,18 @@ def reset_lossy_counter():
     """Call this at the start of every training step/iteration."""
     # Flush previous step's buffered gradient samples before resetting counters.
     # All collectives here happen between steps so NCCL ordering is safe.
-    if _GRAD_COMPARISONS_ENABLED and _GRAD_CMP_BUFFER:
-        _flush_grad_comparisons()
+    if _GRAD_COMPARISONS_ENABLED:
+        try:
+            rank = dist.get_rank() if (dist.is_available() and dist.is_initialized()) else 0
+        except Exception:
+            rank = 0
+        # _RS_CALL_COUNT at this point = number of RS calls in the last backward pass.
+        # Buffer size = number of layers successfully buffered.
+        if rank == 0:
+            print(f"[GRAD_CMP][DIAG] RS calls last step={_RS_CALL_COUNT}, "
+                  f"buffer keys={sorted(_GRAD_CMP_BUFFER.keys())}", flush=True)
+        if _GRAD_CMP_BUFFER:
+            _flush_grad_comparisons()
 
     global _CURRENT_ITERATION_CALL_COUNT, _RS_CALL_COUNT
     _CURRENT_ITERATION_CALL_COUNT = 0
