@@ -57,8 +57,8 @@ export WANDB_PROJECT="lossy_net_fsdp_study"
 # Target loss on a specific layer
 # Set this to the ID of the layer you want to sabotage. 
 # Check your CSV log from a previous run to find the exact ID.
-# export TARGET_LAYER_ID="2"
-export TARGET_LAYER_ID="21"
+export TARGET_LAYER_ID="2"
+# export TARGET_LAYER_ID="21"
 
 
 # Enable gradient similarity comparisons across GPUs for the target layer
