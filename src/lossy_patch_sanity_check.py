@@ -1134,3 +1134,11 @@ def install_lossy_collectives(
         if hasattr(dist, name):
             setattr(dist, name, _wrap(name))
 
+    # FSDP's _runtime_utils.py calls through torch.distributed.distributed_c10d
+    # directly (not through the torch.distributed namespace we patched above).
+    # Mirror the same wrapped functions there so all RS calls are intercepted.
+    import torch.distributed.distributed_c10d as _c10d
+    for name in ("all_gather_into_tensor", "reduce_scatter_tensor", "_reduce_scatter_base", "all_reduce"):
+        if hasattr(dist, name) and hasattr(_c10d, name):
+            setattr(_c10d, name, getattr(dist, name))
+
