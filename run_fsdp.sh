@@ -73,8 +73,8 @@ export NNODES=1
 # Target loss on a specific layer
 # Set this to the ID of the layer you want to sabotage. 
 # Check your CSV log from a previous run to find the exact ID.
-# export TARGET_LAYER_ID="2"
-export TARGET_LAYER_ID="21"
+export TARGET_LAYER_ID="2"
+# export TARGET_LAYER_ID="21"
 
 
 # Logging Directory
