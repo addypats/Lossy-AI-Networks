@@ -25,6 +25,14 @@ generation_datasets = ['hotpotqa', 'squad', 'tinysquad', 'newsqa', 'triviaqa']
 
 
 class LossyStepBump(TrainerCallback):
+    def on_train_begin(self, args, state, control, **kwargs):
+        # FSDP wrapping has already happened by on_train_begin, so we can
+        # safely walk the model and register per-layer backward hooks.
+        model = kwargs.get("model", None)
+        if model is not None:
+            from lossy_patch_sanity_check import install_grad_comparison_hooks
+            install_grad_comparison_hooks(model)
+
     def on_step_begin(self, args, state, control, **kwargs):
         # HF keeps state.global_step consistent across ranks.
         os.environ["LOSSY_GLOBAL_STEP"] = str(state.global_step)

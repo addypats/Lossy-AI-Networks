@@ -50,9 +50,13 @@ _GRAD_CMP_LAYER_NAME = os.environ.get("GRAD_CMP_LAYER_NAME", "rs0")
 _GRAD_CMP_BATCH_SIZE = os.environ.get("GRAD_CMP_BATCH_SIZE", "")
 
 # Buffer for gradient samples collected during the backward pass.
-# Keys: rs_call_id (int)  Values: (sampled_cpu_tensor, global_step)
-# Populated during RS calls (no collective), flushed at step boundaries.
+# Keys: layer index (int)  Values: (sampled_cpu_tensor, global_step)
+# Populated during backward (via hooks or RS wrapper), flushed at step boundaries.
 _GRAD_CMP_BUFFER: dict = {}
+
+# Set to True after install_grad_comparison_hooks() runs.
+# While True, the NCCL-wrapper-based capture is skipped to avoid key conflicts.
+_GRAD_HOOKS_INSTALLED: bool = False
 
 # ---- Per-layer-instance logging state -----------------------------------
 
@@ -514,7 +518,11 @@ def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: i
     pass, and _flush_grad_comparisons() does the all_gathers between steps when
     NCCL is idle.
     """
-    if fn_name != "reduce_scatter_tensor" or not _GRAD_COMPARISONS_ENABLED:
+    # If backward hooks are installed, they handle capture per-layer reliably.
+    # Skip the NCCL-wrapper path to avoid overwriting hook data in the buffer.
+    if not _GRAD_COMPARISONS_ENABLED or _GRAD_HOOKS_INSTALLED:
+        return
+    if fn_name not in ("reduce_scatter_tensor", "_reduce_scatter_base"):
         return
 
     try:
@@ -535,6 +543,61 @@ def _capture_gradient_for_comparison(fn_name: str, tensor: torch.Tensor, rank: i
         import traceback
         print(f"[GRAD_CMP][BUFFER][ERROR] rank={rank} layer={current_call_id}: {e}", flush=True)
         traceback.print_exc()
+
+
+def install_grad_comparison_hooks(model) -> None:
+    """
+    Call AFTER the model is FSDP-wrapped (e.g., from on_train_begin callback).
+
+    Registers one full_backward_hook per transformer decoder layer found in the
+    model.  Each hook samples grad_output[0] — the activation gradient flowing
+    backward through that layer — and stores it in _GRAD_CMP_BUFFER keyed by
+    layer index (0 = first layer, N-1 = last layer).
+
+    This approach is pure Python autograd: no NCCL interception, no namespace
+    patching.  It fires reliably once per layer per backward step regardless of
+    FSDP's internal collective calling conventions.
+
+    The existing buffer/flush in reset_lossy_counter() handles the all_gather
+    and CSV writing unchanged.
+    """
+    global _GRAD_HOOKS_INSTALLED
+    if not _GRAD_COMPARISONS_ENABLED or _GRAD_HOOKS_INSTALLED:
+        return
+
+    try:
+        rank = dist.get_rank() if (dist.is_available() and dist.is_initialized()) else 0
+    except Exception:
+        rank = 0
+
+    installed = 0
+    for _name, mod in model.named_modules():
+        if "DecoderLayer" not in type(mod).__name__:
+            continue
+
+        layer_idx = installed  # 0 = first decoder layer in forward order
+
+        def _make_hook(idx: int):
+            def _hook(module, grad_input, grad_output):
+                g = grad_output[0] if (grad_output and grad_output[0] is not None) else None
+                if g is None:
+                    return
+                flat = g.detach().float().flatten()
+                sample_size = min(flat.numel(), _GRAD_SAMPLE_SIZE)
+                sampled = flat[:sample_size].contiguous().cpu()
+                try:
+                    global_step = int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
+                except Exception:
+                    global_step = 0
+                _GRAD_CMP_BUFFER[idx] = (sampled, global_step)
+            return _hook
+
+        mod.register_full_backward_hook(_make_hook(layer_idx))
+        installed += 1
+
+    _GRAD_HOOKS_INSTALLED = True
+    if rank == 0:
+        print(f"[GRAD_CMP] installed backward hooks on {installed} DecoderLayer modules", flush=True)
 
 
 def _flush_grad_comparisons():
@@ -1127,18 +1190,47 @@ def install_lossy_collectives(
 
         return wrapped
 
-    # Patch the collectives you use.
-    # _reduce_scatter_base is FSDP's private alias for reduce_scatter_tensor in
-    # some PyTorch versions — patch it too so we never miss a layer's RS call.
-    for name in ("all_gather_into_tensor", "reduce_scatter_tensor", "_reduce_scatter_base", "all_reduce"):
-        if hasattr(dist, name):
-            setattr(dist, name, _wrap(name))
+    # Build all wrappers BEFORE patching any namespace so each wrapper captures
+    # the true original function (not a previously-wrapped version).
+    _wrappers = {}
+    for _name in ("all_gather_into_tensor", "reduce_scatter_tensor", "_reduce_scatter_base", "all_reduce"):
+        if hasattr(dist, _name):
+            _wrappers[_name] = _wrap(_name)
 
-    # FSDP's _runtime_utils.py calls through torch.distributed.distributed_c10d
-    # directly (not through the torch.distributed namespace we patched above).
-    # Mirror the same wrapped functions there so all RS calls are intercepted.
+    # Patch every namespace that FSDP might call through:
+    #   1. torch.distributed            — the public API
+    #   2. torch.distributed.distributed_c10d — the implementation module
+    #   3. FSDP's own internal modules  — these do
+    #        "from torch.distributed import reduce_scatter_tensor"
+    #      at import time (BEFORE install_lossy_collectives runs), so they hold
+    #      a local reference to the *original* function that bypasses patches on
+    #      the above two namespaces.  We fix that by overwriting the attribute
+    #      directly on the already-imported module object.
+    import sys
     import torch.distributed.distributed_c10d as _c10d
-    for name in ("all_gather_into_tensor", "reduce_scatter_tensor", "_reduce_scatter_base", "all_reduce"):
-        if hasattr(dist, name) and hasattr(_c10d, name):
-            setattr(_c10d, name, getattr(dist, name))
+
+    _namespaces_to_patch = [dist, _c10d]
+    for _fsdp_mod in (
+        "torch.distributed.fsdp._runtime_utils",
+        "torch.distributed.fsdp.flat_param",
+        "torch.distributed.fsdp._init_utils",
+        "torch.distributed.fsdp._shard_utils",
+    ):
+        _m = sys.modules.get(_fsdp_mod)
+        if _m is not None:
+            _namespaces_to_patch.append(_m)
+
+    for _ns in _namespaces_to_patch:
+        for _name, _wrapper in _wrappers.items():
+            if hasattr(_ns, _name):
+                setattr(_ns, _name, _wrapper)
+
+    if _init_rank == 0:
+        _fsdp_patched = [m for m in (
+            "torch.distributed.fsdp._runtime_utils",
+            "torch.distributed.fsdp.flat_param",
+            "torch.distributed.fsdp._init_utils",
+            "torch.distributed.fsdp._shard_utils",
+        ) if sys.modules.get(m) is not None]
+        print(f"[LOSSY] patched namespaces: dist, c10d; FSDP modules patched={_fsdp_patched}", flush=True)
 
