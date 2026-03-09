@@ -578,26 +578,20 @@ def install_grad_comparison_hooks(model, loss=None, num_nodes: int = 1, gpus_per
         layer_idx = installed  # 0 = first decoder layer in forward order
 
         def _make_hook(idx: int):
-            # register_full_backward_hook fires AFTER this layer's parameter
-            # gradients (param.grad) have been computed by autograd, but BEFORE
-            # FSDP's RS collective reduces them across ranks.
-            # Sequence per layer:
-            #   1. CAPTURE: sample clean param.grad (natural diversity, pre-corruption)
-            #   2. CORRUPT: apply loss model in-place on param.grad (boundary rank only)
-            #   3. RS collective runs with the corrupted param.grad
-            def _hook(module, grad_input, grad_output):
-                # Collect all parameter gradients for this layer into one flat vector.
-                grads = [
-                    p.grad.detach().float().flatten()
-                    for p in module.parameters(recurse=False)
-                    if p.grad is not None
-                ]
-                if not grads:
+            # register_full_backward_pre_hook fires before the layer uses
+            # grad_output to compute param.grad — so:
+            #   1. CAPTURE grad_output[0] clean (natural diversity, pre-corruption)
+            #   2. CORRUPT grad_output[0] in-place (boundary rank only)
+            #   3. Layer computes param.grad from the corrupted signal
+            #   4. FSDP RS collective reduces the corrupted param.grad
+            def _hook(module, grad_output):
+                g = grad_output[0] if (grad_output and grad_output[0] is not None) else None
+                if g is None:
                     return
-                flat = torch.cat(grads)
 
-                # 1. CAPTURE clean param.grad for cross-rank comparison.
+                # 1. CAPTURE clean gradient signal for cross-rank comparison.
                 if _GRAD_COMPARISONS_ENABLED:
+                    flat = g.detach().float().flatten()
                     sample_size = min(flat.numel(), _GRAD_SAMPLE_SIZE)
                     sampled = flat[:sample_size].contiguous().cpu()
                     try:
@@ -606,18 +600,16 @@ def install_grad_comparison_hooks(model, loss=None, num_nodes: int = 1, gpus_per
                         global_step = 0
                     _GRAD_CMP_BUFFER[idx] = (sampled, global_step)
 
-                # 2. CORRUPT param.grad in-place so RS collective sees lossy gradients.
+                # 2. CORRUPT in-place AFTER capture so logs always show clean values.
                 if inject_loss:
                     try:
-                        for p in module.parameters(recurse=False):
-                            if p.grad is not None:
-                                _apply_packet_loss_(p.grad, loss, tag=f"layer{idx}")
+                        _apply_packet_loss_(g, loss, tag=f"layer{idx}")
                     except Exception as e:
                         print(f"[LOSSY][HOOK][ERROR] rank={rank} layer={idx}: {e}", flush=True)
 
             return _hook
 
-        mod.register_full_backward_hook(_make_hook(layer_idx))
+        mod.register_full_backward_pre_hook(_make_hook(layer_idx))
         installed += 1
 
     _GRAD_HOOKS_INSTALLED = True
