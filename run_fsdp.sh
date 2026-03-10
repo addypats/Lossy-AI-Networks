@@ -34,8 +34,8 @@ GPUS_LIST=(4)
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
 # PER_DEVICE_BS=8
 
-# PER_DEVICE_BS=8
-PER_DEVICE_BS=32
+PER_DEVICE_BS=8
+# PER_DEVICE_BS=32
 
 
 export ENABLE_GRAD_COMPARISONS=1
