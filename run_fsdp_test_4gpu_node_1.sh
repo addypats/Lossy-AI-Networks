@@ -34,8 +34,8 @@ PER_DEVICE_BS=16
 DET_BATCH_SIZES=(8 16 24 32)
 
 LR=1e-5
-OPTIMIZER="sgd"
-# OPTIMIZER="adamw_torch"
+# OPTIMIZER="sgd"
+OPTIMIZER="adamw_torch"
 #EPOCHS=1
 #EVAL_STEPS=50
 
@@ -49,7 +49,7 @@ CONFIGS=()
 # CONFIGS_DET=("high_persistence_low_intensity_1")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.9")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.8")
-# CONFIGS_DET=("high_persistence_low_intensity_1_0.7")
+CONFIGS_DET=("high_persistence_low_intensity_1_0.7")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.6")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.4")
