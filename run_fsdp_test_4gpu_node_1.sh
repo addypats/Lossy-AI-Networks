@@ -31,6 +31,7 @@ GPUS_LIST=(4)
 PER_DEVICE_BS=16
 # PER_DEVICE_BS=24
 # PER_DEVICE_BS=32
+DET_BATCH_SIZES=(8 16 24 32)
 
 LR=1e-5
 #EPOCHS=1
@@ -177,17 +178,19 @@ echo "Starting fsdp det experiments!"
 for config in "${CONFIGS_DET[@]}"; do
   for gpus in "${GPUS_LIST[@]}"; do
     for seed in "${SEEDS[@]}"; do
-      ts=$(date +%Y%m%d-%H%M%S)
+      for batch_size in "${DET_BATCH_SIZES[@]}"; do
+        ts=$(date +%Y%m%d-%H%M%S)
 
-      run_id="${gpus}gpus_${DATASET}_seed${seed}_loss-rate_${config}_${ts}"
-      output_dir="output_piqa/${DATASET}"
+        run_id="${gpus}gpus_${DATASET}_seed${seed}_bs${batch_size}_loss-rate_${config}_${ts}"
+        output_dir="output_piqa/${DATASET}"
 
-      echo "Starting experiment: $run_id"
+        echo "Starting experiment: $run_id"
 
-      # Make run_id visible to Python code (lossy_patch.py)
-      export RUN_ID="${run_id}"
+        # Make run_id visible to Python code (lossy_patch.py)
+        export RUN_ID="${run_id}"
+        export GRAD_CMP_BATCH_SIZE="${batch_size}"
 
-      TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
+        TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
 	torchrun --nnodes=$NNODES \
         --node_rank=1 \
         --master_addr=$MASTER_ADDR \
@@ -196,7 +199,7 @@ for config in "${CONFIGS_DET[@]}"; do
         src/main_fsdp.py \
         --model_name "$MODEL" \
         --dataset "$DATASET" \
-        --batch_size "${PER_DEVICE_BS}" \
+        --batch_size "${batch_size}" \
         --learning_rate "${LR}" \
         --run_id "$run_id" \
         --epochs 20 \
@@ -210,8 +213,9 @@ for config in "${CONFIGS_DET[@]}"; do
         --det_config "$config" \
         --num_nodes "${NNODES}" \
         --fp16
-      echo "Completed experiment: $run_id"
-      echo "--------------------------------"
+        echo "Completed experiment: $run_id"
+        echo "--------------------------------"
+      done
     done
   done
 done

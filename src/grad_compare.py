@@ -115,7 +115,7 @@ ROOT_DIR = 'sanity_check_logs'
 
 # LIST YOUR FOLDERS HERE (Copy-paste the folder names from your directory)
 FOLDERS_TO_PROCESS = [
-    "4gpus_piqa_seed10_loss-rate0_20260310-183420_gradcmp_bs32_nodes4",
+    "4gpus_piqa_seed10_loss-rate_high_persistence_low_intensity_1_20260313-023001_gradcmp_bs16_nodes4",
     # "another_folder_name_here",
 ]
 # ---------------------
@@ -193,7 +193,7 @@ for folder in FOLDERS_TO_PROCESS:
 if final_dfs:
     master_df = pd.concat(final_dfs, ignore_index=True)
     # Save a specific file for these folders
-    output_name = "4_nodes_grad_cmp_0_loss_BS_32.csv"
+    output_name = "4_nodes_grad_cmp_1%_det_loss_BS_16.csv"
     master_df.to_csv(output_name, index=False)
     print(f"\nSuccess! Results saved to: {output_name}")
     print(master_df.head(10))
