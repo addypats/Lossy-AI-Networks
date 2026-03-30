@@ -672,7 +672,7 @@ def _flush_grad_comparisons():
             os.makedirs(folder_path, exist_ok=True)
             path = os.path.join(folder_path, f"layer{rs_call_id}.csv")
             _write_comparison_results(results, path)
-            print(f"[GRAD_CMP] step={global_step} layer={rs_call_id} -> {run_folder}/layer{rs_call_id}.csv (+{len(results)} rows)", flush=True)
+            # print(f"[GRAD_CMP] step={global_step} layer={rs_call_id} -> {run_folder}/layer{rs_call_id}.csv (+{len(results)} rows)", flush=True)
 
         except Exception as e:
             import traceback
