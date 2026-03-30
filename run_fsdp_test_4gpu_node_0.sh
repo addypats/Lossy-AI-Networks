@@ -35,6 +35,8 @@ PER_DEVICE_BS=16
 DET_BATCH_SIZES=(8 16 24 32)
 
 LR=1e-5
+OPTIMIZER="sgd"
+# OPTIMIZER="adamw_torch"
 #EPOCHS=1
 #EVAL_STEPS=50
 
@@ -95,7 +97,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
     for seed in "${SEEDS[@]}"; do
       ts=$(date +%Y%m%d-%H%M%S)
 
-      run_id="${gpus}gpus_${DATASET}_seed${seed}_loss-rate${loss_rate}_${ts}"
+      run_id="${gpus}gpus_${DATASET}_seed${seed}_opt-${OPTIMIZER}_loss-rate${loss_rate}_${ts}"
       output_dir="output_piqa/${DATASET}"
 
       echo "Starting experiment: $run_id"
@@ -115,6 +117,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
         --run_id "${run_id}" \
         --batch_size "${PER_DEVICE_BS}" \
         --learning_rate "${LR}" \
+        --optim "${OPTIMIZER}" \
         --eval_steps 20 \
         --epochs 20 \
         --loss_rate "$loss_rate" \
@@ -139,7 +142,7 @@ for config in "${CONFIGS[@]}"; do
     for seed in "${SEEDS[@]}"; do
       ts=$(date +%Y%m%d-%H%M%S)
 
-      run_id="${gpus}gpus_${DATASET}_seed${seed}_loss-rate_${config}_${ts}"
+      run_id="${gpus}gpus_${DATASET}_seed${seed}_opt-${OPTIMIZER}_loss-rate_${config}_${ts}"
       output_dir="output_piqa/${DATASET}"
 
       echo "Starting experiment: $run_id"
@@ -159,6 +162,7 @@ for config in "${CONFIGS[@]}"; do
         --run_id "${run_id}" \
         --batch_size "${PER_DEVICE_BS}" \
         --learning_rate "${LR}" \
+        --optim "${OPTIMIZER}" \
         --eval_steps 20 \
         --epochs 20 \
         --loss_type "g-e" \
@@ -185,7 +189,7 @@ for config in "${CONFIGS_DET[@]}"; do
       for batch_size in "${DET_BATCH_SIZES[@]}"; do
         ts=$(date +%Y%m%d-%H%M%S)
 
-        run_id="${gpus}gpus_${DATASET}_seed${seed}_bs${batch_size}_loss-rate_${config}_${ts}"
+        run_id="${gpus}gpus_${DATASET}_seed${seed}_bs${batch_size}_opt-${OPTIMIZER}_loss-rate_${config}_${ts}"
         output_dir="output_piqa/${DATASET}"
 
         echo "Starting experiment: $run_id"
@@ -205,6 +209,7 @@ for config in "${CONFIGS_DET[@]}"; do
         --dataset "$DATASET" \
         --batch_size "${batch_size}" \
         --learning_rate "${LR}" \
+        --optim "${OPTIMIZER}" \
         --run_id "$run_id" \
         --epochs 20 \
         --seed "$seed" \

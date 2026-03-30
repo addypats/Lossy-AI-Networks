@@ -355,6 +355,7 @@ def main(args):
         per_device_eval_batch_size=eval_bs,
         num_train_epochs=args.epochs,
         learning_rate= args.learning_rate,
+        optim=args.optim,
         weight_decay=0.01,
         eval_strategy="steps",
         eval_steps=args.eval_steps,
@@ -436,6 +437,8 @@ if __name__ == "__main__":
     parser.add_argument('--save_steps', type=int, default=100)
     parser.add_argument('--logging_steps', type=int, default=10)
     parser.add_argument('--learning_rate', type=float, default=3e-5)
+    parser.add_argument('--optim', type=str, default='adamw_torch', choices=['adamw_torch', 'sgd'],
+                        help='Optimizer for Hugging Face Trainer. Use "sgd" to switch from AdamW.')
     parser.add_argument('--run_id', type=str, required=True)
     parser.add_argument('-nunf', '--num_unfrozen_layers', type=int, default=None, 
                         help='Number of unfrozen layers in the model. If None, all layers are unfrozen.')
