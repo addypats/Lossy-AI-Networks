@@ -116,6 +116,7 @@ class OptimizerAuditLogger:
 
         self.jsonl_path = os.path.join(self.log_dir, f"rank{self.rank}.jsonl")
         self.csv_path = os.path.join(self.log_dir, f"rank{self.rank}.csv")
+        self.manifest_rank_path = os.path.join(self.log_dir, f"manifest_rank{self.rank}.json")
         self.manifest_path = os.path.join(self.log_dir, "manifest.json")
 
         self.csv_header = [
@@ -195,8 +196,12 @@ class OptimizerAuditLogger:
             "created_ms": int(time.time() * 1000),
             "schema": self.csv_header,
         }
-        with open(self.manifest_path, "w") as handle:
+        with open(self.manifest_rank_path, "w") as handle:
             json.dump(manifest, handle, indent=2)
+
+        if self.rank == 0 and not os.path.exists(self.manifest_path):
+            with open(self.manifest_path, "w") as handle:
+                json.dump(manifest, handle, indent=2)
 
     def write_records(self, records: Iterable[dict]) -> None:
         records = list(records)
