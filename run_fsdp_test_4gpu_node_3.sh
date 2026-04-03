@@ -8,7 +8,7 @@ MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-# LOSS_RATES=("0")
+LOSS_RATES=("0")
 
 # Testing
 # LOSS_RATES=("1")
@@ -31,7 +31,7 @@ GPUS_LIST=(4)
 PER_DEVICE_BS=16
 # PER_DEVICE_BS=24
 # PER_DEVICE_BS=32
-DET_BATCH_SIZES=(8 16 24 32)
+DET_BATCH_SIZES=(8 32)
 
 LR=1e-5
 # OPTIMIZER="sgd"
@@ -52,7 +52,7 @@ CONFIGS=()
 # CONFIGS_DET=("high_persistence_low_intensity_1")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.9")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.8")
-CONFIGS_DET=("high_persistence_low_intensity_1_0.7")
+# CONFIGS_DET=("high_persistence_low_intensity_1_0.7")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.6")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.4")
@@ -95,43 +95,45 @@ echo "Ber fsdp exp started"
 for loss_rate in "${LOSS_RATES[@]}"; do
   for gpus in "${GPUS_LIST[@]}"; do
     for seed in "${SEEDS[@]}"; do
-      ts=$(date +%Y%m%d-%H%M%S)
+      for batch_size in "${DET_BATCH_SIZES[@]}"; do
+        ts=$(date +%Y%m%d-%H%M%S)
 
-      run_id="${gpus}gpus_${DATASET}_seed${seed}_opt-${OPTIMIZER}_${OPTIMIZER_AUDIT_TAG}_loss-rate${loss_rate}_${ts}"
-      output_dir="output_piqa/${DATASET}"
+        run_id="${gpus}gpus_${DATASET}_seed${seed}_opt-${OPTIMIZER}_${OPTIMIZER_AUDIT_TAG}_loss-rate${loss_rate}_${ts}"
+        output_dir="output_piqa/${DATASET}"
+    
+        echo "Starting experiment: $run_id"
 
-      echo "Starting experiment: $run_id"
+        # Make run_id visible to Python code (lossy_patch.py)
+        export RUN_ID="${run_id}"
 
-      # Make run_id visible to Python code (lossy_patch.py)
-      export RUN_ID="${run_id}"
+        TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
+        torchrun --nnodes=$NNODES \
+      --node_rank=3 \
+      --master_addr=$MASTER_ADDR \
+      --master_port=$MASTER_PORT \
+    --nproc_per_node="${gpus}" \
+    src/main_fsdp.py \
+          --model_name "${MODEL}" \
+          --dataset "${DATASET}" \
+          --run_id "${run_id}" \
+          --batch_size "${batch_size}" \
+          --learning_rate "${LR}" \
+          --optim "${OPTIMIZER}" \
+          --enable_optimizer_audit \
+          --optimizer_audit_log_root "${OPTIMIZER_AUDIT_LOG_ROOT}" \
+          --optimizer_audit_sample_size 16 \
+          --eval_steps 20 \
+          --epochs 20 \
+          --loss_rate "$loss_rate" \
+    --loss-enable-all \
+          --seed "${seed}" \
+          --output_dir "${output_dir}" \
+          --fp16 \
+    --num_nodes "${NNODES}"
 
-      TORCH_LOGS="distributed,dist_fsdp" TORCH_DISTRIBUTED_DEBUG=DETAIL \
-      torchrun --nnodes=$NNODES \
-  	--node_rank=3 \
-  	--master_addr=$MASTER_ADDR \
-  	--master_port=$MASTER_PORT \
-	--nproc_per_node="${gpus}" \
-	src/main_fsdp.py \
-        --model_name "${MODEL}" \
-        --dataset "${DATASET}" \
-        --run_id "${run_id}" \
-        --batch_size "${PER_DEVICE_BS}" \
-        --learning_rate "${LR}" \
-        --optim "${OPTIMIZER}" \
-        --enable_optimizer_audit \
-        --optimizer_audit_log_root "${OPTIMIZER_AUDIT_LOG_ROOT}" \
-        --optimizer_audit_sample_size 16 \
-        --eval_steps 20 \
-        --epochs 20 \
-        --loss_rate "$loss_rate" \
-	--loss-enable-all \
-        --seed "${seed}" \
-        --output_dir "${output_dir}" \
-        --fp16 \
-	--num_nodes "${NNODES}"
-
-      echo "Completed experiment: $run_id"
-      echo "--------------------------------"
+        echo "Completed experiment: $run_id"
+        echo "--------------------------------"
+      done
     done  
   done
 done
