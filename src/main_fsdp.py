@@ -68,10 +68,6 @@ class LossyGradHookCallback(TrainerCallback):
     def on_train_begin(self, args, state, control, **kwargs):
         if not self.enable or self._installed:
             return
-        model = kwargs.get("model", None)
-        if model is None:
-            return
-        attach_lossy_grad_hooks(model, self.lossy, include_bias=self.include_bias, verbose=True)
         self._installed = True
 
 
@@ -187,7 +183,7 @@ def main(args):
          # Find matching row by run_id (the column name in your CSV)
         row = configs.loc[configs["runs_id"] == run_id]
         if row.empty:
-            raise ValueError(f"id '{runs_id}' not found in {configs}. "
+            raise ValueError(f"id '{run_id}' not found in {configs}. "
                              f"Available: {configs['runs_id'].tolist()}")
         r = row.iloc[0]   # <-- define r before using it
 
@@ -408,6 +404,21 @@ def main(args):
 
     # install_collective_hooks(logdir="logs_reduce")
 
+    trainer.create_optimizer()
+
+    enable_optimizer_audit = args.enable_optimizer_audit or os.environ.get("ENABLE_OPTIMIZER_AUDIT", "0") == "1"
+    if enable_optimizer_audit:
+        import optimizer_audit
+
+        optimizer_audit.enable(
+            model=trainer.model,
+            optimizer=trainer.optimizer,
+            run_id=args.run_id,
+            log_root=args.optimizer_audit_log_root,
+            sample_size=args.optimizer_audit_sample_size,
+            global_step_fn=lambda: trainer.state.global_step,
+        )
+
     trainer.train()
 
     # fsdp_introspect.finalize()   # writes *_sorted.jsonl and *_sorted.csv
@@ -439,6 +450,12 @@ if __name__ == "__main__":
     parser.add_argument('--learning_rate', type=float, default=3e-5)
     parser.add_argument('--optim', type=str, default='adamw_torch', choices=['adamw_torch', 'sgd'],
                         help='Optimizer for Hugging Face Trainer. Use "sgd" to switch from AdamW.')
+    parser.add_argument('--enable_optimizer_audit', action='store_true',
+                        help='Write raw per-step optimizer audit records for comparison.')
+    parser.add_argument('--optimizer_audit_log_root', type=str, default=None,
+                        help='Root directory for optimizer audit outputs. Defaults to SANITY_CHECK_LOGS.')
+    parser.add_argument('--optimizer_audit_sample_size', type=int, default=16,
+                        help='Number of tensor elements to sample in raw audit records.')
     parser.add_argument('--run_id', type=str, required=True)
     parser.add_argument('-nunf', '--num_unfrozen_layers', type=int, default=None, 
                         help='Number of unfrozen layers in the model. If None, all layers are unfrozen.')

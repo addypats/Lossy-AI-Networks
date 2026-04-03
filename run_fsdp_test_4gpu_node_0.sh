@@ -37,6 +37,9 @@ DET_BATCH_SIZES=(8 16 24 32)
 LR=1e-5
 # OPTIMIZER="sgd"
 OPTIMIZER="adamw_torch"
+ENABLE_OPTIMIZER_AUDIT=1
+OPTIMIZER_AUDIT_TAG="auditraw"
+OPTIMIZER_AUDIT_LOG_ROOT="/home/ubuntu/Lossy-AI-Networks/optimizer_audit_logs"
 #EPOCHS=1
 #EVAL_STEPS=50
 
@@ -97,7 +100,7 @@ for loss_rate in "${LOSS_RATES[@]}"; do
     for seed in "${SEEDS[@]}"; do
       ts=$(date +%Y%m%d-%H%M%S)
 
-      run_id="${gpus}gpus_${DATASET}_seed${seed}_opt-${OPTIMIZER}_loss-rate${loss_rate}_${ts}"
+      run_id="${gpus}gpus_${DATASET}_seed${seed}_opt-${OPTIMIZER}_${OPTIMIZER_AUDIT_TAG}_loss-rate${loss_rate}_${ts}"
       output_dir="output_piqa/${DATASET}"
 
       echo "Starting experiment: $run_id"
@@ -118,6 +121,9 @@ for loss_rate in "${LOSS_RATES[@]}"; do
         --batch_size "${PER_DEVICE_BS}" \
         --learning_rate "${LR}" \
         --optim "${OPTIMIZER}" \
+        --enable_optimizer_audit \
+        --optimizer_audit_log_root "${OPTIMIZER_AUDIT_LOG_ROOT}" \
+        --optimizer_audit_sample_size 16 \
         --eval_steps 20 \
         --epochs 20 \
         --loss_rate "$loss_rate" \
@@ -142,7 +148,7 @@ for config in "${CONFIGS[@]}"; do
     for seed in "${SEEDS[@]}"; do
       ts=$(date +%Y%m%d-%H%M%S)
 
-      run_id="${gpus}gpus_${DATASET}_seed${seed}_opt-${OPTIMIZER}_loss-rate_${config}_${ts}"
+      run_id="${gpus}gpus_${DATASET}_seed${seed}_opt-${OPTIMIZER}_${OPTIMIZER_AUDIT_TAG}_loss-rate_${config}_${ts}"
       output_dir="output_piqa/${DATASET}"
 
       echo "Starting experiment: $run_id"
@@ -163,6 +169,9 @@ for config in "${CONFIGS[@]}"; do
         --batch_size "${PER_DEVICE_BS}" \
         --learning_rate "${LR}" \
         --optim "${OPTIMIZER}" \
+        --enable_optimizer_audit \
+        --optimizer_audit_log_root "${OPTIMIZER_AUDIT_LOG_ROOT}" \
+        --optimizer_audit_sample_size 16 \
         --eval_steps 20 \
         --epochs 20 \
         --loss_type "g-e" \
@@ -189,7 +198,7 @@ for config in "${CONFIGS_DET[@]}"; do
       for batch_size in "${DET_BATCH_SIZES[@]}"; do
         ts=$(date +%Y%m%d-%H%M%S)
 
-        run_id="${gpus}gpus_${DATASET}_seed${seed}_bs${batch_size}_opt-${OPTIMIZER}_loss-rate_${config}_${ts}"
+        run_id="${gpus}gpus_${DATASET}_seed${seed}_bs${batch_size}_opt-${OPTIMIZER}_${OPTIMIZER_AUDIT_TAG}_loss-rate_${config}_${ts}"
         output_dir="output_piqa/${DATASET}"
 
         echo "Starting experiment: $run_id"
@@ -210,6 +219,9 @@ for config in "${CONFIGS_DET[@]}"; do
         --batch_size "${batch_size}" \
         --learning_rate "${LR}" \
         --optim "${OPTIMIZER}" \
+        --enable_optimizer_audit \
+        --optimizer_audit_log_root "${OPTIMIZER_AUDIT_LOG_ROOT}" \
+        --optimizer_audit_sample_size 16 \
         --run_id "$run_id" \
         --epochs 20 \
         --seed "$seed" \

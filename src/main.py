@@ -192,7 +192,7 @@ def main(args):
          # Find matching row by run_id (the column name in your CSV)
         row = configs.loc[configs["runs_id"] == run_id]
         if row.empty:
-            raise ValueError(f"id '{runs_id}' not found in {configs}. "
+            raise ValueError(f"id '{run_id}' not found in {configs}. "
                              f"Available: {configs['runs_id'].tolist()}")
         r = row.iloc[0]   # <-- define r before using it
 
