@@ -1,0 +1,22 @@
+{
+  "state": "bad",
+  "episode_index": 27,
+  "state_ordinal": 13,
+  "start_time_wall": 1771873438.952641,
+  "end_time_wall": 1771873463.4741635,
+  "wall_time_sec": 24.521523004999835,
+  "lossy_calls": 1,
+  "optimizer_steps": 0,
+  "global_step_start": 1539,
+  "global_step_end": 1539,
+  "packets": 178365,
+  "dropped": 8027,
+  "running_total_lossy_calls": 77,
+  "running_total_optimizer_steps": 50,
+  "running_total_packets": 13734105,
+  "running_total_dropped": 120396,
+  "running_total_time_sec": 2415.308568004004,
+  "lrb": 0.045,
+  "lrg": 0.0,
+  "steps": 0
+}
