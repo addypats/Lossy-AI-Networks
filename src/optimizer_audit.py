@@ -4,6 +4,7 @@ import math
 import os
 import threading
 import time
+import types
 from typing import Any, Callable, Dict, Iterable, Optional
 
 import torch
@@ -426,14 +427,15 @@ def enable(
 
     named_params = {id(param): name for name, param in model.named_parameters()}
     original_step = optimizer.step
+    original_step_fn = original_step.__func__ if hasattr(original_step, "__func__") else None
 
     if getattr(original_step, "__optimizer_audit_wrapped__", False):
         return logger
 
-    def step_wrapper(*args, **kwargs):
+    def step_wrapper(self, *args, **kwargs):
         pre_snapshots = []
         with torch.no_grad():
-            for group_idx, group in enumerate(optimizer.param_groups):
+            for group_idx, group in enumerate(self.param_groups):
                 for param_idx, param in enumerate(group.get("params", [])):
                     if not isinstance(param, torch.nn.Parameter):
                         continue
@@ -442,22 +444,25 @@ def enable(
                         param_name=named_params.get(id(param), f"param_{group_idx}_{param_idx}"),
                         group_idx=group_idx,
                         param_idx=param_idx,
-                        optimizer=optimizer,
+                        optimizer=self,
                         sample_size=sample_size,
                     )
                     if snapshot is not None:
                         pre_snapshots.append(snapshot)
 
-        result = original_step(*args, **kwargs)
+        if original_step_fn is not None:
+            result = original_step_fn(self, *args, **kwargs)
+        else:
+            result = original_step(*args, **kwargs)
 
         records = []
         with torch.no_grad():
             for snapshot in pre_snapshots:
-                records.append(_finalize_record(snapshot, optimizer))
+                records.append(_finalize_record(snapshot, self))
 
         logger.write_records(records)
         return result
 
     step_wrapper.__optimizer_audit_wrapped__ = True
-    optimizer.step = step_wrapper
+    optimizer.step = types.MethodType(step_wrapper, optimizer)
     return logger
