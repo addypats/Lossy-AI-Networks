@@ -1,0 +1,11 @@
+Episode: BAD #0  (index 1)
+Start:   2026-03-30 19:23:40
+End:     2026-03-30 19:27:14
+Duration (wall): 214.113293 s
+Lossy calls (collectives): 940
+Optimizer steps:          38
+Global step range:        80 → 118
+Packets sent:             79696455
+Packets dropped:          3586340
+Running totals → lossy_calls=2861, opt_steps=117, packets=241802038, dropped=3586340, wall_time=526.7761095380001
+Params: lrb=0.045, lrg=0.0
