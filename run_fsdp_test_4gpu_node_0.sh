@@ -8,7 +8,7 @@ MODEL_ALIAS="TinyLlama"
 DATASET="piqa"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=("0")
+# LOSS_RATES=("0")
 
 # Testing
 # LOSS_RATES=("1")
@@ -58,7 +58,7 @@ CONFIGS=()
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.5")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.4")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.3")
-# CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
+CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
 
 
