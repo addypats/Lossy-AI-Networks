@@ -4,6 +4,8 @@ import os
 import time
 import math
 import csv
+import json
+import hashlib
 from collections import defaultdict
 
 import torch
@@ -74,11 +76,24 @@ _HIT_ONCE = {"all_gather_into_tensor": False,
              "reduce_scatter_tensor": False,
              "all_reduce": False}
 
+# ---- Sampled shard-impact logging -------------------------------------
+_SHARD_IMPACT_LOG_ENABLED = os.environ.get("ENABLE_SHARD_IMPACT_LOGS", "1") == "1"
+_SHARD_IMPACT_LOG_PROB = float(os.environ.get("SHARD_IMPACT_LOG_PROB", "0.01"))
+_SHARD_IMPACT_MAX_PER_STEP = int(os.environ.get("SHARD_IMPACT_MAX_PER_STEP", "2"))
+_SHARD_IMPACT_PREVIEW_LEN = int(os.environ.get("SHARD_IMPACT_PREVIEW_LEN", "16"))
+_SHARD_IMPACT_SEED = os.environ.get("SHARD_IMPACT_SEED", "")
+_SHARD_IMPACT_ENABLE_AG = os.environ.get("ENABLE_SHARD_IMPACT_AG", "1") == "1"
+_SHARD_IMPACT_ENABLE_RS = os.environ.get("ENABLE_SHARD_IMPACT_RS", "1") == "1"
+_SHARD_IMPACT_ENABLE_AR = os.environ.get("ENABLE_SHARD_IMPACT_AR", "1") == "1"
+_SHARD_IMPACT_STEP_SAMPLE_COUNT = 0
+_SHARD_IMPACT_LOG_DIR = os.path.join(_LOG_ROOT, f"{_RUN_ID}_shard_impact")
+os.makedirs(_SHARD_IMPACT_LOG_DIR, exist_ok=True)
+
 
 # --- Add this function to be called by your trainer ---
 def reset_lossy_counter():
     """Call this at the start of every training step/iteration."""
-    global _CURRENT_ITERATION_CALL_COUNT, _RS_CALL_COUNT
+    global _CURRENT_ITERATION_CALL_COUNT, _RS_CALL_COUNT, _SHARD_IMPACT_STEP_SAMPLE_COUNT
     # Flush previous step's buffered gradient samples before resetting counters.
     # All collectives here happen between steps so NCCL ordering is safe.
     if _GRAD_COMPARISONS_ENABLED:
@@ -91,6 +106,7 @@ def reset_lossy_counter():
 
     _CURRENT_ITERATION_CALL_COUNT = 0
     _RS_CALL_COUNT = 0
+    _SHARD_IMPACT_STEP_SAMPLE_COUNT = 0
     
 
 
@@ -106,6 +122,150 @@ def _is_payload_tensor(t: torch.Tensor) -> bool:
 def _layer_shape_str(global_elems: int, dtype: torch.dtype) -> str:
     """Human-readable layer shape string for the CSV."""
     return f"global_elems={global_elems}, dtype={str(dtype)}"
+
+
+def _current_rank_world() -> tuple[int, int]:
+    if dist.is_available() and dist.is_initialized():
+        return dist.get_rank(), dist.get_world_size()
+    rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    return rank, world_size
+
+
+def _current_global_step() -> int:
+    try:
+        return int(os.environ.get("LOSSY_GLOBAL_STEP", "0"))
+    except Exception:
+        return 0
+
+
+def _shard_impact_log_path(rank: int) -> str:
+    return os.path.join(_SHARD_IMPACT_LOG_DIR, f"rank{rank}.jsonl")
+
+
+def _should_sample_shard_event(fn_name: str, rank: int, global_step: int, call_id: int, rs_call_id: int) -> bool:
+    if not _SHARD_IMPACT_LOG_ENABLED:
+        return False
+    if _SHARD_IMPACT_LOG_PROB <= 0:
+        return False
+    if _SHARD_IMPACT_MAX_PER_STEP >= 0 and _SHARD_IMPACT_STEP_SAMPLE_COUNT >= _SHARD_IMPACT_MAX_PER_STEP:
+        return False
+    if _SHARD_IMPACT_LOG_PROB >= 1:
+        return True
+
+    key = f"{_SHARD_IMPACT_SEED}|{_RUN_ID}|{rank}|{global_step}|{fn_name}|{call_id}|{rs_call_id}"
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    value = int(digest[:8], 16) / float(0xFFFFFFFF)
+    return value < _SHARD_IMPACT_LOG_PROB
+
+
+def _tensor_preview(tensor: torch.Tensor, preview_len: int) -> list:
+    if tensor is None or preview_len <= 0:
+        return []
+    flat = tensor.detach().flatten().float().cpu()
+    return flat[: min(flat.numel(), preview_len)].tolist()
+
+
+def _compute_shard_impact_metrics(before: torch.Tensor, after: torch.Tensor) -> dict:
+    before_f = before.detach().flatten().float().cpu()
+    after_f = after.detach().flatten().float().cpu()
+
+    if before_f.numel() == 0:
+        return {
+            "affected_elem_fraction": 0.0,
+            "newly_zeroed_fraction": 0.0,
+            "norm_before": 0.0,
+            "norm_after": 0.0,
+            "norm_ratio": 0.0,
+            "relative_error": 0.0,
+            "changed_elem_count": 0,
+            "zeroed_elem_count": 0,
+        }
+
+    diff = before_f - after_f
+    changed_mask = diff != 0
+    before_nonzero = before_f != 0
+    zeroed_mask = before_nonzero & (after_f == 0)
+
+    norm_before = float(before_f.norm().item())
+    norm_after = float(after_f.norm().item())
+    diff_norm = float(diff.norm().item())
+    total_elems = float(before_f.numel())
+
+    return {
+        "affected_elem_fraction": float(changed_mask.sum().item()) / total_elems,
+        "newly_zeroed_fraction": float(zeroed_mask.sum().item()) / total_elems,
+        "norm_before": norm_before,
+        "norm_after": norm_after,
+        "norm_ratio": norm_after / (norm_before + 1e-12),
+        "relative_error": diff_norm / (norm_before + 1e-12),
+        "changed_elem_count": int(changed_mask.sum().item()),
+        "zeroed_elem_count": int(zeroed_mask.sum().item()),
+    }
+
+
+def _write_shard_impact_row(entry: dict, rank: int) -> None:
+    if not _SHARD_IMPACT_LOG_ENABLED:
+        return
+
+    path = _shard_impact_log_path(rank)
+    with open(path, mode="a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, separators=(",", ":"), ensure_ascii=False) + "\n")
+
+
+def _maybe_log_shard_impact(
+    *,
+    fn_name: str,
+    tensor_before: torch.Tensor,
+    tensor_after: torch.Tensor,
+    stats: dict,
+    rank: int,
+    global_step: int,
+    call_id: int,
+    rs_call_id: int,
+    tensor_role: str,
+    output_tensor: torch.Tensor | None = None,
+) -> None:
+    global _SHARD_IMPACT_STEP_SAMPLE_COUNT
+
+    if not _SHARD_IMPACT_LOG_ENABLED:
+        return
+
+    if not _should_sample_shard_event(fn_name, rank, global_step, call_id, rs_call_id):
+        return
+
+    metrics = _compute_shard_impact_metrics(tensor_before, tensor_after)
+    payload = {
+        "global_step": global_step,
+        "rank": rank,
+        "fn_name": fn_name,
+        "tensor_role": tensor_role,
+        "call_id": call_id,
+        "rs_call_id": rs_call_id,
+        "dtype": str(tensor_after.dtype),
+        "shape": list(tensor_after.shape),
+        "numel": int(tensor_after.numel()),
+        "packet_stats": {
+            "num_packets": int(stats.get("num_packets", 0)),
+            "dropped_packets": int(stats.get("dropped_packets", 0)),
+            "received_packets": int(stats.get("received_packets", 0)),
+        },
+        "packet_drop_fraction": (
+            float(stats.get("dropped_packets", 0)) / float(stats.get("num_packets", 1))
+            if stats.get("num_packets", 0)
+            else 0.0
+        ),
+        **metrics,
+        "before_preview": _tensor_preview(tensor_before, _SHARD_IMPACT_PREVIEW_LEN),
+        "after_preview": _tensor_preview(tensor_after, _SHARD_IMPACT_PREVIEW_LEN),
+    }
+
+    if output_tensor is not None:
+        payload["output_norm"] = float(output_tensor.detach().flatten().float().norm().item())
+        payload["output_preview"] = _tensor_preview(output_tensor, _SHARD_IMPACT_PREVIEW_LEN)
+
+    _write_shard_impact_row(payload, rank)
+    _SHARD_IMPACT_STEP_SAMPLE_COUNT += 1
 
 
 def _write_layer_row(entry: dict) -> None:
@@ -1149,12 +1309,38 @@ def install_lossy_collectives(
             rank, world_size = _get_rank_world()
             gpn, node_id, input_rank = _logical_topology(rank, world_size, num_nodes)
             
-            # 1. Extract the tensor to check its size
+            # 1. Extract the relevant input/output tensors for the collective.
             t_in = None
-            if len(args) >= 2 and isinstance(args[1], torch.Tensor):
-                t_in = args[1]
-            elif "input_tensor" in kwargs:
-                t_in = kwargs["input_tensor"]
+            t_out = None
+
+            if fn_name == "all_reduce":
+                if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+                    t_in = args[0]
+                    t_out = args[0]
+                elif "tensor" in kwargs and isinstance(kwargs["tensor"], torch.Tensor):
+                    t_in = kwargs["tensor"]
+                    t_out = kwargs["tensor"]
+            elif fn_name == "all_gather_into_tensor":
+                if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+                    t_out = args[0]
+                if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                    t_in = args[1]
+                elif "input_tensor" in kwargs and isinstance(kwargs["input_tensor"], torch.Tensor):
+                    t_in = kwargs["input_tensor"]
+            elif fn_name in ("reduce_scatter_tensor", "_reduce_scatter_base"):
+                if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+                    t_out = args[0]
+                if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                    t_in = args[1]
+                elif "input_tensor" in kwargs and isinstance(kwargs["input_tensor"], torch.Tensor):
+                    t_in = kwargs["input_tensor"]
+            else:
+                if len(args) >= 2 and isinstance(args[1], torch.Tensor):
+                    t_in = args[1]
+                elif len(args) >= 1 and isinstance(args[0], torch.Tensor):
+                    t_in = args[0]
+                elif "input_tensor" in kwargs and isinstance(kwargs["input_tensor"], torch.Tensor):
+                    t_in = kwargs["input_tensor"]
 
             # 2. SIZE THRESHOLD CHECK
             # FSDP shards are large (millions of params). 
@@ -1192,15 +1378,78 @@ def install_lossy_collectives(
                     _capture_gradient_for_comparison(fn_name, t_in, rank, rs_call_id)
 
                 if inject_here:
+                    sampled_before = None
+                    should_log_shard = False
+                    if fn_name == "all_gather_into_tensor" and enable_allgather and _SHARD_IMPACT_ENABLE_AG:
+                        should_log_shard = True
+                    elif is_rs and enable_rs and _SHARD_IMPACT_ENABLE_RS:
+                        should_log_shard = True
+                    elif fn_name == "all_reduce" and enable_allreduce and _SHARD_IMPACT_ENABLE_AR:
+                        should_log_shard = True
+
+                    if should_log_shard:
+                        should_sample = _should_sample_shard_event(fn_name, rank, _current_global_step(), current_call_id, rs_call_id)
+                        if should_sample:
+                            sampled_before = t_in.detach().float().clone()
+
                     if fn_name == "all_gather_into_tensor" and enable_allgather:
                         if _should_touch_tensor(t_in):
                             stats = _apply_packet_loss_(t_in, loss, tag="ag.target")
                             _record_packets_instance(fn_name, t_in, stats, enable_allgather=enable_allgather)
+                            output = original(*args, **kwargs)
+                            if sampled_before is not None:
+                                _maybe_log_shard_impact(
+                                    fn_name=fn_name,
+                                    tensor_before=sampled_before,
+                                    tensor_after=t_in,
+                                    stats=stats,
+                                    rank=rank,
+                                    global_step=_current_global_step(),
+                                    call_id=current_call_id,
+                                    rs_call_id=rs_call_id,
+                                    tensor_role="all_gather_input",
+                                    output_tensor=t_out,
+                                )
+                            return output
 
                     elif is_rs and enable_rs:
                         if _should_touch_tensor(t_in):
                             stats = _apply_packet_loss_(t_in, loss, tag="rs.target")
                             _record_packets_instance(fn_name, t_in, stats, enable_allgather=enable_allgather)
+                            output = original(*args, **kwargs)
+                            if sampled_before is not None:
+                                _maybe_log_shard_impact(
+                                    fn_name=fn_name,
+                                    tensor_before=sampled_before,
+                                    tensor_after=t_in,
+                                    stats=stats,
+                                    rank=rank,
+                                    global_step=_current_global_step(),
+                                    call_id=current_call_id,
+                                    rs_call_id=rs_call_id,
+                                    tensor_role="reduce_scatter_input",
+                                    output_tensor=t_out,
+                                )
+                            return output
+
+                    elif fn_name == "all_reduce" and enable_allreduce:
+                        if _should_touch_tensor(t_in):
+                            stats = _apply_packet_loss_(t_in, loss, tag="ar.tensor")
+                            output = original(*args, **kwargs)
+                            if sampled_before is not None:
+                                _maybe_log_shard_impact(
+                                    fn_name=fn_name,
+                                    tensor_before=sampled_before,
+                                    tensor_after=t_in,
+                                    stats=stats,
+                                    rank=rank,
+                                    global_step=_current_global_step(),
+                                    call_id=current_call_id,
+                                    rs_call_id=rs_call_id,
+                                    tensor_role="all_reduce_tensor",
+                                    output_tensor=t_out,
+                                )
+                            return output
 
             except Exception as e:
                 import traceback
