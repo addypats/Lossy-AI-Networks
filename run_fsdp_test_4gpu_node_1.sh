@@ -5,10 +5,11 @@ set -euo pipefail
 # MODEL="Qwen/Qwen2-1.5B"
 MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
-DATASET="piqa"
+# DATASET="piqa"
+DATASET="squad"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-# LOSS_RATES=("0")
+LOSS_RATES=("0")
 
 # Testing
 # LOSS_RATES=("1")
@@ -28,10 +29,10 @@ GPUS_LIST=(4)
 
 # Per-GPU batch size (HF Trainer interprets this as per_device_* batch size)
 # PER_DEVICE_BS=8
-PER_DEVICE_BS=16
+# PER_DEVICE_BS=16
 # PER_DEVICE_BS=24
 # PER_DEVICE_BS=32
-DET_BATCH_SIZES=(8 32)
+DET_BATCH_SIZES=(32)
 
 LR=1e-5
 # OPTIMIZER="sgd"
@@ -49,7 +50,7 @@ CONFIGS=()
 
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3" "high_persistence_low_intensity_4" "high_persistence_low_intensity_5" "high_persistence_low_intensity_6" "high_intensity_low_persistence_1" "high_intensity_low_persistence_2" "high_intensity_low_persistence_3" "high_intensity_low_persistence_4" "high_intensity_low_persistence_5" "high_intensity_low_persistence_6")
 # CONFIGS_DET=("high_persistence_low_intensity_1" "high_persistence_low_intensity_2" "high_persistence_low_intensity_3")
-CONFIGS_DET=("high_persistence_low_intensity_1")
+# CONFIGS_DET=("high_persistence_low_intensity_1")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.9")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.8")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.7")
@@ -59,6 +60,8 @@ CONFIGS_DET=("high_persistence_low_intensity_1")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.3")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
+CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5")
+# CONFIGS_DET=("high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
 
 
 
