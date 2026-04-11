@@ -10,7 +10,7 @@ DATASET="squad"
 
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=("0")
+# LOSS_RATES=("0")
 
 # Testing
 # LOSS_RATES=("1")
@@ -61,8 +61,8 @@ CONFIGS=()
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.3")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
-CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5")
-# CONFIGS_DET=("high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
+# CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5")
+CONFIGS_DET=("high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
 
 # GPU settings
 export CUDA_VISIBLE_DEVICES=0,1,2,3
