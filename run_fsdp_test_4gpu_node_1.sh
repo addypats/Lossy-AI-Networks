@@ -5,11 +5,11 @@ set -euo pipefail
 # MODEL="Qwen/Qwen2-1.5B"
 MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
-# DATASET="piqa"
-DATASET="squad"
+DATASET="piqa"
+# DATASET="squad"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-# LOSS_RATES=("0")
+LOSS_RATES=("0")
 
 # Testing
 # LOSS_RATES=("1")
@@ -32,7 +32,7 @@ GPUS_LIST=(4)
 # PER_DEVICE_BS=16
 # PER_DEVICE_BS=24
 PER_DEVICE_BS=32
-DET_BATCH_SIZES=(16)
+DET_BATCH_SIZES=(32)
 
 LR=1e-5
 # OPTIMIZER="sgd"
@@ -61,7 +61,7 @@ CONFIGS=()
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5")
-CONFIGS_DET=("high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
+CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5" "high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
 
 
 
@@ -233,8 +233,6 @@ for config in "${CONFIGS_DET[@]}"; do
         --output_dir "$output_dir" \
               --eval_steps 20 \
         --loss-enable-ag \
-        --loss-enable-ar \
-        --loss-enable-rs \
         --loss_type "det" \
         --det_config "$config" \
         --num_nodes "${NNODES}" \
