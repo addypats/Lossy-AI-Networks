@@ -10,7 +10,7 @@ DATASET="piqa"
 
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-LOSS_RATES=("0")
+# LOSS_RATES=("0")
 
 # Testing
 # LOSS_RATES=("1")
