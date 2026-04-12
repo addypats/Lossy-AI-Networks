@@ -62,7 +62,8 @@ CONFIGS=()
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5" "high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
-CONFIGS_DET=("high_freq_low_intensity_1_0.2" "high_freq_low_intensity_1_0.5" "high_freq_low_intensity_1_0.7" "high_freq_low_intensity_1_1.0")
+CONFIGS_DET=("high_persistence_low_frequency_0.2" "high_persistence_low_frequency_0.5" "high_persistence_low_frequency_0.7" "high_persistence_low_frequency_1" "high_frequency_low_intensity_0.2" "high_frequency_low_intensity_0.5" "high_frequency_low_intensity_0.7" "high_frequency_low_intensity_1")
+# CONFIGS_DET=("high_frequency_low_intensity_0.2" "high_frequency_low_intensity_0.5" "high_frequency_low_intensity_0.7" "high_frequency_low_intensity")
 
 
 # GPU settings
