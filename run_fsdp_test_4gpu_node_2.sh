@@ -61,7 +61,9 @@ CONFIGS=()
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5")
-CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5" "high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
+# CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5" "high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
+CONFIGS_DET=("high_freq_low_intensity_1_0.2" "high_freq_low_intensity_1_0.5" "high_freq_low_intensity_1_0.7" "high_freq_low_intensity_1_1.0")
+
 
 # GPU settings
 export CUDA_VISIBLE_DEVICES=0,1,2,3
@@ -231,6 +233,8 @@ for config in "${CONFIGS_DET[@]}"; do
         --output_dir "$output_dir" \
               --eval_steps 20 \
         --loss-enable-ag \
+        --loss-enable-ar \
+        --loss-enable-rs \
         --loss_type "det" \
         --det_config "$config" \
         --num_nodes "${NNODES}" \
