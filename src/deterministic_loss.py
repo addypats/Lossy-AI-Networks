@@ -53,7 +53,12 @@ def _skew_longer(lengths: List[int], frac: float) -> List[int]:
             lengths[j] -= take
     return lengths
 
-def _timeline_from_bursts(T_steps: int, burst_lengths: List[int], gap_mode: str = "standard") -> List[int]:
+def _timeline_from_bursts(
+    T_steps: int,
+    burst_lengths: List[int],
+    gap_mode: str = "standard",
+    burst_start_step: int = 0,
+) -> List[int]:
     B = sum(burst_lengths)
     G = T_steps - B
     assert G >= 0, "Total BAD steps exceed T_steps."
@@ -70,11 +75,20 @@ def _timeline_from_bursts(T_steps: int, burst_lengths: List[int], gap_mode: str 
     if mode in ("even", "standard"):
         pass
     elif mode == "early":
-        # Keep burst lengths and inter-burst rhythm, but move the whole burst
-        # envelope earlier by removing the initial GOOD prefix.
-        leading_good = gaps[0]
-        gaps[0] = 0
-        gaps[-1] += leading_good
+        # Keep burst lengths and interior inter-burst rhythm, but place the first
+        # BAD step at a caller-controlled optimizer step.
+        desired_start = int(burst_start_step)
+        if desired_start < 0:
+            desired_start = 0
+
+        # Preserve all interior gaps and adjust only leading/trailing GOOD regions.
+        interior_sum = sum(gaps[1:-1]) if len(gaps) > 2 else 0
+        max_start = G - interior_sum
+        if desired_start > max_start:
+            desired_start = max_start
+
+        gaps[0] = desired_start
+        gaps[-1] = G - interior_sum - gaps[0]
     else:
         raise ValueError(
             f"Unsupported gap_mode '{gap_mode}'. Supported values: standard, early"
@@ -125,12 +139,14 @@ class DeterministicBurstLossyNetwork:
         self.seed      = int(row.get("seed", 0))
         self.skew_frac = float(row.get("skew_frac", 0.0))
         self.gap_mode  = str(row.get("gap_mode", "even"))
+        self.burst_start_step = int(row.get("burst_start_step", 0))
 
         if strict_validate:
             # Pure assertions; no recomputation or overriding
             assert 0.0 <= self.lrg <= 1.0
             assert 0.0 < self.lrb <= 1.0
             assert 0.0 <= self.L_overall <= 1.0
+            assert self.burst_start_step >= 0
             # Identities (tolerate small rounding error from B = round(πB*T))
             assert abs(self.piB - (self.L_overall - self.lrg) / (self.lrb - self.lrg)) < 1e-6, "piB mismatch"
             assert abs(self.Eb - (self.B / self.N)) < 1e-9, "Eb mismatch"
@@ -141,7 +157,12 @@ class DeterministicBurstLossyNetwork:
         bl = _build_equal_lengths(self.B, self.N)
         bl = _skew_longer(bl, self.skew_frac)
         assert sum(bl) == self.B
-        self.state = _timeline_from_bursts(self.T_steps, bl, self.gap_mode)
+        self.state = _timeline_from_bursts(
+            self.T_steps,
+            bl,
+            self.gap_mode,
+            self.burst_start_step,
+        )
 
         # Logging folders (optional metadata like model/task can be added to CSV if desired)
         os.makedirs(log_dir, exist_ok=True)
@@ -190,6 +211,7 @@ class DeterministicBurstLossyNetwork:
         seed: int,
         skew_frac: float,
         gap_mode: str,
+        burst_start_step: int = 0,
         log_dir: str = "det_logs",
         strict_validate: bool = True,
     ):
@@ -212,6 +234,7 @@ class DeterministicBurstLossyNetwork:
             "seed": int(seed),
             "skew_frac": float(skew_frac),
             "gap_mode": str(gap_mode),
+            "burst_start_step": int(burst_start_step),
         }
 
         # Instantiate an object without triggering CSV loading
@@ -231,11 +254,13 @@ class DeterministicBurstLossyNetwork:
         self.seed      = int(row.get("seed", 0))
         self.skew_frac = float(row.get("skew_frac", 0.0))
         self.gap_mode  = str(row.get("gap_mode", "even"))
+        self.burst_start_step = int(row.get("burst_start_step", 0))
 
         if strict_validate:
             assert 0.0 <= self.lrg <= 1.0
             assert 0.0 <  self.lrb <= 1.0
             assert 0.0 <= self.L_overall <= 1.0
+            assert self.burst_start_step >= 0
             # identities (allowing small rounding error on B = round(piB*T))
             assert abs(self.Eb - (self.B / self.N)) < 1e-9, "Eb mismatch"
             assert abs(self.rho - (self.N / self.T_steps)) < 1e-12, "rho mismatch"
@@ -245,7 +270,12 @@ class DeterministicBurstLossyNetwork:
         bl = _build_equal_lengths(self.B, self.N)
         bl = _skew_longer(bl, self.skew_frac)
         assert sum(bl) == self.B
-        self.state = _timeline_from_bursts(self.T_steps, bl, self.gap_mode)
+        self.state = _timeline_from_bursts(
+            self.T_steps,
+            bl,
+            self.gap_mode,
+            self.burst_start_step,
+        )
 
         # Logging setup (unchanged from your class)
         os.makedirs(log_dir, exist_ok=True)

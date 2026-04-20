@@ -194,14 +194,17 @@ def main(args):
 
         det_burst_timing = str(getattr(args, "det_burst_timing", "standard")).lower()
         selected_gap_mode = "early" if det_burst_timing == "early" else "standard"
+        det_burst_start_step = int(getattr(args, "det_burst_start_step", 0))
         if det_burst_timing not in ("standard", "early"):
             raise ValueError(
                 f"Unsupported det_burst_timing '{args.det_burst_timing}'. Use 'standard' or 'early'."
             )
+        if det_burst_start_step < 0:
+            raise ValueError("det_burst_start_step must be >= 0")
 
         print(
             f"[det] run_id={run_id_str} csv_gap_mode={csv_gap_mode} "
-            f"selected_gap_mode={selected_gap_mode}"
+            f"selected_gap_mode={selected_gap_mode} burst_start_step={det_burst_start_step}"
         )
 
         # Create a subfolder inside det_logs/
@@ -224,6 +227,7 @@ def main(args):
             seed      = to_int(r["seed"]),
             skew_frac = to_float(r["skew_frac"]),
             gap_mode  = selected_gap_mode,
+            burst_start_step = det_burst_start_step,
             log_dir   = log_dir,
             strict_validate = True
         )
@@ -450,6 +454,12 @@ if __name__ == "__main__":
         default="standard",
         choices=["standard", "early"],
         help="When using --loss_type det, choose when to induce burst episodes.",
+    )
+    parser.add_argument(
+        "--det_burst_start_step",
+        type=int,
+        default=0,
+        help="When --det_burst_timing=early, place first burst at this optimizer step.",
     )
     parser.add_argument('--seed', type=int, default=1234, help='Random seed')
     parser.add_argument('--model_name', type=str, default='meta-llama/Llama-3.2-1B', help='Model name')

@@ -239,6 +239,7 @@ for config in "${CONFIGS_DET[@]}"; do
         --loss_type "det" \
         --det_config "$config" \
         --det_burst_timing "early" \
+        --det_burst_start_step 49 \
         --num_nodes "${NNODES}" \
         --fp16
         echo "Completed experiment: $run_id"
