@@ -9,7 +9,7 @@ DATASET="piqa"
 # DATASET="squad"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
-# LOSS_RATES=("0")
+LOSS_RATES=("0")
 
 # Testing
 # LOSS_RATES=("1")
@@ -61,8 +61,8 @@ CONFIGS=()
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.1")
 # CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5")
-# CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5" "high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
-CONFIGS_DET=("high_persistence_low_frequency_0.2" "high_persistence_low_frequency_0.5" "high_persistence_low_frequency_0.7" "high_persistence_low_frequency_1" "high_frequency_low_intensity_0.2" "high_frequency_low_intensity_0.5" "high_frequency_low_intensity_0.7" "high_frequency_low_intensity_1")
+CONFIGS_DET=("high_persistence_low_intensity_1_0.2" "high_persistence_low_intensity_1_0.5" "high_persistence_low_intensity_1_0.7" "high_persistence_low_intensity_1")
+# CONFIGS_DET=("high_persistence_low_frequency_0.2" "high_persistence_low_frequency_0.5" "high_persistence_low_frequency_0.7" "high_persistence_low_frequency_1" "high_frequency_low_intensity_0.2" "high_frequency_low_intensity_0.5" "high_frequency_low_intensity_0.7" "high_frequency_low_intensity_1")
 # CONFIGS_DET=("high_frequency_low_intensity_0.2" "high_frequency_low_intensity_0.5" "high_frequency_low_intensity_0.7" "high_frequency_low_intensity")
 
 
@@ -238,6 +238,7 @@ for config in "${CONFIGS_DET[@]}"; do
         --loss-enable-rs \
         --loss_type "det" \
         --det_config "$config" \
+        --det_burst_timing "early" \
         --num_nodes "${NNODES}" \
         --fp16
         echo "Completed experiment: $run_id"

@@ -53,18 +53,32 @@ def _skew_longer(lengths: List[int], frac: float) -> List[int]:
             lengths[j] -= take
     return lengths
 
-def _timeline_from_bursts(T_steps: int, burst_lengths: List[int], gap_mode: str = "even") -> List[int]:
+def _timeline_from_bursts(T_steps: int, burst_lengths: List[int], gap_mode: str = "standard") -> List[int]:
     B = sum(burst_lengths)
     G = T_steps - B
     assert G >= 0, "Total BAD steps exceed T_steps."
     N = len(burst_lengths)
 
-    # even gap distribution (others can be added later)
+    # Build the default (historical) equal-gap schedule.
     base_gap = G // (N + 1)
     rem_gap  = G - base_gap * (N + 1)
     gaps     = [base_gap] * (N + 1)
     for i in range(rem_gap):
         gaps[i] += 1
+
+    mode = str(gap_mode).strip().lower()
+    if mode in ("even", "standard"):
+        pass
+    elif mode == "early":
+        # Keep burst lengths and inter-burst rhythm, but move the whole burst
+        # envelope earlier by removing the initial GOOD prefix.
+        leading_good = gaps[0]
+        gaps[0] = 0
+        gaps[-1] += leading_good
+    else:
+        raise ValueError(
+            f"Unsupported gap_mode '{gap_mode}'. Supported values: standard, early"
+        )
 
     state = []
     state.extend([GOOD] * gaps[0])

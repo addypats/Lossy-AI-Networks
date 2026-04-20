@@ -199,6 +199,19 @@ def main(args):
         import os
 
         run_id_str = str(r["runs_id"])        # e.g., "high_persistence_low_intensity_1"
+        csv_gap_mode = to_str(r["gap_mode"])
+
+        det_burst_timing = str(getattr(args, "det_burst_timing", "standard")).lower()
+        selected_gap_mode = "early" if det_burst_timing == "early" else "standard"
+        if det_burst_timing not in ("standard", "early"):
+            raise ValueError(
+                f"Unsupported det_burst_timing '{args.det_burst_timing}'. Use 'standard' or 'early'."
+            )
+
+        print(
+            f"[det] run_id={run_id_str} csv_gap_mode={csv_gap_mode} "
+            f"selected_gap_mode={selected_gap_mode}"
+        )
 
         # Create a subfolder inside det_logs/
         log_dir = os.path.join("det_logs", run_id_str)
@@ -219,7 +232,7 @@ def main(args):
             rho       = to_float(r["rho"]),
             seed      = to_int(r["seed"]),
             skew_frac = to_float(r["skew_frac"]),
-            gap_mode  = to_str(r["gap_mode"]),
+            gap_mode  = selected_gap_mode,
             log_dir   = log_dir,
             strict_validate = True
         )
@@ -308,6 +321,13 @@ if __name__ == "__main__":
     parser.add_argument('--loss_type', type=str, default='ber', choices=['ber', 'g-e', 'det'], help='Type of packet loss simulation: "ber" for Bernoulli, "g-e" for Gilbert-Elliott')
     parser.add_argument('--ge_config', type = str, default = 'default', help='configuration id for Gilbert-Elliott loss simulation. Refer to g_e_params.csv')
     parser.add_argument("--det_config", type=str, default="default", help="configuration id for Deterministic Custom loss simulation. Refer to runs_profiles_det.csv)")
+    parser.add_argument(
+        "--det_burst_timing",
+        type=str,
+        default="standard",
+        choices=["standard", "early"],
+        help="When using --loss_type det, choose when to induce burst episodes.",
+    )
     parser.add_argument('--seed', type=int, default=1234, help='Random seed')
     parser.add_argument('--model_name', type=str, default='meta-llama/Llama-3.2-1B', help='Model name')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
