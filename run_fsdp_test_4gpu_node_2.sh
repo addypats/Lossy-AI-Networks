@@ -5,7 +5,8 @@ set -euo pipefail
 # MODEL="Qwen/Qwen2-1.5B"
 MODEL="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 MODEL_ALIAS="TinyLlama"
-DATASET="piqa"
+# DATASET="piqa"
+DATASET="mnli"
 # DATASET="squad"
 # LOSS_RATES=("0" "0.005" "0.01")
 # LOSS_RATES=("0" "0.005" "0.01")
@@ -238,7 +239,7 @@ for config in "${CONFIGS_DET[@]}"; do
         --loss-enable-rs \
         --loss_type "det" \
         --det_config "$config" \
-        --det_burst_timing "early" \
+        --det_burst_timing "standard" \
         --det_burst_start_step 49 \
         --num_nodes "${NNODES}" \
         --fp16
